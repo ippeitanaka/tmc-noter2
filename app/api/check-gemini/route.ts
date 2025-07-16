@@ -2,7 +2,6 @@ import { NextResponse } from "next/server"
 
 export async function GET(req: Request) {
   try {
-    // サーバーサイドでGemini APIキーが設定されているかチェック
     const apiKey = process.env.GEMINI_API_KEY
 
     if (!apiKey) {
@@ -10,7 +9,6 @@ export async function GET(req: Request) {
       return NextResponse.json({ available: false, message: "APIキーが設定されていません" })
     }
 
-    // URLクエリパラメータからskipCheckの値を取得
     const url = new URL(req.url)
     const skipCheck = url.searchParams.get("skipCheck") === "true"
 
@@ -23,13 +21,11 @@ export async function GET(req: Request) {
       })
     }
 
-    // タイムアウト処理を改善
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Request timeout")), 3000) // 3秒に短縮
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Request timeout")), 3000)
     })
 
     try {
-      // まず利用可能なモデルを取得（タイムアウト付き）
       const modelsResponse = await Promise.race([
         fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`, {
           method: "GET",
@@ -38,7 +34,7 @@ export async function GET(req: Request) {
           },
         }),
         timeoutPromise,
-      ])
+      ]) as Response
 
       if (!modelsResponse.ok) {
         const errorData = await modelsResponse.json().catch(() => ({}))
@@ -52,7 +48,6 @@ export async function GET(req: Request) {
           })
         }
 
-        // APIキーは有効と仮定して続行
         return NextResponse.json({
           available: true,
           message: "Gemini APIキーは設定されていますが、モデルリストの取得に失敗しました",
@@ -67,7 +62,6 @@ export async function GET(req: Request) {
       const availableModels = modelsData.models || []
       const modelNames = availableModels.map((model: any) => model.name)
 
-      // 使用するモデルを選択
       let modelToUse = ""
       for (const model of availableModels) {
         const modelName = model.name.split("/").pop()
@@ -99,7 +93,6 @@ export async function GET(req: Request) {
 
       console.log("Using model:", modelToUse)
 
-      // 選択したモデルでテスト（タイムアウト付き）
       const response = await Promise.race([
         fetch(`https://generativelanguage.googleapis.com/v1/${modelToUse}:generateContent?key=${apiKey}`, {
           method: "POST",
@@ -123,7 +116,7 @@ export async function GET(req: Request) {
           }),
         }),
         timeoutPromise,
-      ])
+      ]) as Response
 
       if (response.ok) {
         console.log("Gemini API connection successful")
@@ -154,10 +147,9 @@ export async function GET(req: Request) {
           error: errorData,
         })
       }
-    } catch (apiError) {
+    } catch (apiError: any) {
       console.error("Gemini API request failed:", apiError)
 
-      // タイムアウトエラーの場合
       if (apiError.message === "Request timeout" || String(apiError).includes("timeout")) {
         console.log("API test timed out, assuming API is available but slow")
         return NextResponse.json({
@@ -168,7 +160,6 @@ export async function GET(req: Request) {
         })
       }
 
-      // その他のAPI接続問題
       return NextResponse.json({
         available: true,
         message: `Gemini APIへの接続に問題がありますが、キーは設定されています`,
@@ -176,7 +167,7 @@ export async function GET(req: Request) {
         skipApiCheck: true,
       })
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini API check error:", error)
     return NextResponse.json({
       available: true,
