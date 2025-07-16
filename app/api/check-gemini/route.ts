@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     })
 
     try {
-      const modelsResponse = await Promise.race([
+      const result = await Promise.race([
         fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`, {
           method: "GET",
           headers: {
@@ -34,7 +34,13 @@ export async function GET(req: Request) {
           },
         }),
         timeoutPromise,
-      ]) as Response
+      ])
+
+      if (!(result instanceof Response)) {
+        throw new Error("Fetch failed or timed out unexpectedly")
+      }
+
+      const modelsResponse = result
 
       if (!modelsResponse.ok) {
         const errorData = await modelsResponse.json().catch(() => ({}))
@@ -93,7 +99,7 @@ export async function GET(req: Request) {
 
       console.log("Using model:", modelToUse)
 
-      const response = await Promise.race([
+      const contentResult = await Promise.race([
         fetch(`https://generativelanguage.googleapis.com/v1/${modelToUse}:generateContent?key=${apiKey}`, {
           method: "POST",
           headers: {
@@ -116,7 +122,13 @@ export async function GET(req: Request) {
           }),
         }),
         timeoutPromise,
-      ]) as Response
+      ])
+
+      if (!(contentResult instanceof Response)) {
+        throw new Error("Content generation failed or timed out")
+      }
+
+      const response = contentResult
 
       if (response.ok) {
         console.log("Gemini API connection successful")
@@ -132,7 +144,6 @@ export async function GET(req: Request) {
         console.error("Gemini API error:", response.status, errorData)
 
         if (response.status === 503) {
-          console.log("Gemini API is temporarily unavailable (503 error)")
           return NextResponse.json({
             available: false,
             temporary: true,
@@ -151,7 +162,6 @@ export async function GET(req: Request) {
       console.error("Gemini API request failed:", apiError)
 
       if (apiError.message === "Request timeout" || String(apiError).includes("timeout")) {
-        console.log("API test timed out, assuming API is available but slow")
         return NextResponse.json({
           available: true,
           message: "Gemini APIキーが設定されていますが、応答が遅いです",
@@ -162,7 +172,7 @@ export async function GET(req: Request) {
 
       return NextResponse.json({
         available: true,
-        message: `Gemini APIへの接続に問題がありますが、キーは設定されています`,
+        message: "Gemini APIへの接続に問題がありますが、キーは設定されています",
         warning: String(apiError),
         skipApiCheck: true,
       })
