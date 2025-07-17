@@ -25,7 +25,7 @@ export default function EmergencyDebug() {
       }
 
       // API接続テスト
-      let apiTest = { status: "未テスト", error: null }
+      let apiTest: { status: string; error: string | null; data?: any } = { status: "未テスト", error: null }
       try {
         const response = await fetch("/api/debug", {
           method: "GET",
@@ -33,7 +33,7 @@ export default function EmergencyDebug() {
         })
         if (response.ok) {
           const data = await response.json()
-          apiTest = { status: "成功", data }
+          apiTest = { status: "成功", error: null, data }
         } else {
           apiTest = { status: "失敗", error: `${response.status} ${response.statusText}` }
         }
