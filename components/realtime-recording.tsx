@@ -134,7 +134,12 @@ export default function RealtimeRecording({
           setRecordingState(state)
         },
         onChunkComplete: (chunk) => {
-          setChunks(prev => [...prev, chunk])
+          console.log('Chunk received:', chunk) // デバッグ用
+          setChunks(prev => {
+            const newChunks = [...prev, chunk]
+            console.log('Total chunks:', newChunks.length) // デバッグ用
+            return newChunks
+          })
           if (chunk.transcription) {
             setTranscript(prev => prev + (prev ? '\n' : '') + chunk.transcription)
           }
@@ -197,14 +202,26 @@ export default function RealtimeRecording({
         
         await recorder.stopRecording()
         
-        if (onRecordingComplete) {
-          const combinedBlob = await recorder.combineChunks()
-          onRecordingComplete(combinedBlob)
+        // チャンクが存在する場合のみ結合処理を実行
+        if (onRecordingComplete && chunks.length > 0) {
+          try {
+            const combinedBlob = await recorder.combineChunks()
+            onRecordingComplete(combinedBlob)
+          } catch (error) {
+            console.error('録音データの結合に失敗しました:', error)
+            toast({
+              title: "録音データ結合エラー",
+              description: "録音データの結合に失敗しましたが、録音は停止されました",
+              variant: "destructive",
+            })
+          }
         }
         
         toast({
           title: "録音停止",
-          description: autoSave ? "録音を停止し、データを保存しました" : "録音を停止しました",
+          description: chunks.length > 0 
+            ? (autoSave ? "録音を停止し、データを保存しました" : "録音を停止しました")
+            : "録音を停止しました（録音データが検出されませんでした）",
         })
       } catch (error) {
         console.error("録音停止エラー:", error)
@@ -294,7 +311,7 @@ export default function RealtimeRecording({
 
   // 録音データをダウンロード
   const downloadRecording = async () => {
-    if (recorder) {
+    if (recorder && chunks.length > 0) {
       try {
         const combinedBlob = await recorder.combineChunks()
         const url = URL.createObjectURL(combinedBlob)
@@ -305,9 +322,25 @@ export default function RealtimeRecording({
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
+        
+        toast({
+          title: "ダウンロード完了",
+          description: "録音データをダウンロードしました",
+        })
       } catch (error) {
         console.error('Download failed:', error)
+        toast({
+          title: "ダウンロードエラー",
+          description: "録音データのダウンロードに失敗しました",
+          variant: "destructive",
+        })
       }
+    } else {
+      toast({
+        title: "ダウンロード不可",
+        description: "ダウンロード可能な録音データがありません",
+        variant: "destructive",
+      })
     }
   }
 
