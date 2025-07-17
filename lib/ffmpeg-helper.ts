@@ -34,69 +34,65 @@ export const processAudioFile = async (
     // 圧縮設定
     let sampleRate = audioBuffer.sampleRate
     let numberOfChannels = audioBuffer.numberOfChannels
+    let duration = audioBuffer.duration
+    let maxDuration = null
 
     if (compress) {
       // より積極的な圧縮設定
       const fileSizeMB = file.size / (1024 * 1024)
       
-      console.log(`Original file: ${fileSizeMB.toFixed(2)}MB, Target: ${targetSizeMB}MB`)
+      console.log(`Original file: ${fileSizeMB.toFixed(2)}MB, Target: ${targetSizeMB}MB, Duration: ${duration.toFixed(2)}s`)
+
+      // 音声を分割して処理する（15分以上の場合）
+      if (duration > 900) { // 15分以上の場合
+        maxDuration = 900 // 15分に制限
+        console.log(`Duration limited to ${maxDuration}s`)
+      }
 
       // ターゲットサイズに基づいて圧縮レベルを決定
-      if (fileSizeMB > targetSizeMB * 8) {
-        // 非常に大きなファイル
+      numberOfChannels = 1 // 常にモノラル
+      
+      // より積極的な圧縮設定
+      if (fileSizeMB > targetSizeMB * 10) {
         sampleRate = 8000 // 8kHz (電話品質)
-        numberOfChannels = 1 // モノラル
-      } else if (fileSizeMB > targetSizeMB * 4) {
-        // 大きなファイル
-        sampleRate = 16000 // 16kHz (音声認識用)
-        numberOfChannels = 1 // モノラル
+      } else if (fileSizeMB > targetSizeMB * 5) {
+        sampleRate = 11025 // 11kHz 
       } else if (fileSizeMB > targetSizeMB * 2) {
-        // 中程度のファイル
-        sampleRate = 22050 // 22.05kHz
-        numberOfChannels = 1 // モノラル
+        sampleRate = 16000 // 16kHz
       } else {
-        // 小さなファイル
-        sampleRate = Math.min(sampleRate, 32000) // 32kHz
-        numberOfChannels = 1 // モノラル
+        sampleRate = 22050 // 22kHz
       }
+
+      // 元のサンプリングレートより高くしない
+      sampleRate = Math.min(sampleRate, audioBuffer.sampleRate)
 
       console.log(`Compression settings: ${sampleRate}Hz, ${numberOfChannels} channels`)
     }
 
+    // 処理する音声の長さを決定
+    const processingDuration = maxDuration ? Math.min(maxDuration, duration) : duration
+    const newLength = Math.floor(processingDuration * sampleRate)
+    
     // 新しいオーディオバッファを作成
-    const length = Math.ceil(audioBuffer.duration * sampleRate)
-    const offlineContext = new OfflineAudioContext(numberOfChannels, length, sampleRate)
+    const offlineContext = new OfflineAudioContext(numberOfChannels, newLength, sampleRate)
+    
     const source = offlineContext.createBufferSource()
     source.buffer = audioBuffer
     source.connect(offlineContext.destination)
     source.start(0)
 
     const renderedBuffer = await offlineContext.startRendering()
-
-    // MP3エンコーディングを模倣した圧縮WAVファイルとして出力
-    const wavBlob = audioBufferToCompressedWav(renderedBuffer)
-
     await audioContext.close()
+
+    // 圧縮されたWAVファイルを生成（8bitで最大圧縮）
+    const wavBlob = audioBufferToCompressedWav(renderedBuffer, 8)
 
     const compressionRatio = wavBlob.size / file.size
     console.log(`Compression result: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(wavBlob.size / 1024 / 1024).toFixed(2)}MB (${(compressionRatio * 100).toFixed(1)}%)`)
 
-    // 圧縮結果が十分でない場合は、さらに量子化レベルを下げる
-    if (wavBlob.size > file.size * 0.8) {
-      console.warn("Compression not effective enough, applying additional compression")
-      const furtherCompressed = audioBufferToCompressedWav(renderedBuffer, 8) // 8bit量子化
-      
-      if (furtherCompressed.size < wavBlob.size) {
-        return {
-          blob: furtherCompressed,
-          type: "audio/wav",
-        }
-      }
-    }
-
-    // 圧縮結果が元のファイルより大きい場合は元のファイルを返す
-    if (wavBlob.size > file.size) {
-      console.warn("Compression resulted in larger file, using original")
+    // 圧縮結果が元のファイルより大きい場合や圧縮効果が低い場合は元のファイルを返す
+    if (wavBlob.size > file.size || compressionRatio > 0.9) {
+      console.warn("Compression not effective, using original file")
       return {
         blob: file,
         type: file.type,
@@ -118,60 +114,65 @@ export const processAudioFile = async (
 }
 
 // AudioBufferを圧縮WAVファイルに変換
-function audioBufferToCompressedWav(buffer: AudioBuffer, bitDepth: number = 16): Blob {
+const audioBufferToCompressedWav = (buffer: AudioBuffer, bitsPerSample: number = 8): Blob => {
   const length = buffer.length
   const numberOfChannels = buffer.numberOfChannels
   const sampleRate = buffer.sampleRate
-  const bytesPerSample = bitDepth / 8
-  const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * bytesPerSample)
+  
+  // 正確なバイト数を計算
+  const bytesPerSample = bitsPerSample / 8
+  const dataSize = length * numberOfChannels * bytesPerSample
+  
+  // WAVファイルヘッダー
+  const arrayBuffer = new ArrayBuffer(44 + dataSize)
   const view = new DataView(arrayBuffer)
-
-  // WAVヘッダーを書き込み
+  
+  // WAVファイルヘッダーを書き込み
   const writeString = (offset: number, string: string) => {
     for (let i = 0; i < string.length; i++) {
       view.setUint8(offset + i, string.charCodeAt(i))
     }
   }
-
+  
+  const byteRate = sampleRate * numberOfChannels * bytesPerSample
+  const blockAlign = numberOfChannels * bytesPerSample
+  
   writeString(0, "RIFF")
-  view.setUint32(4, 36 + length * numberOfChannels * bytesPerSample, true)
+  view.setUint32(4, 36 + dataSize, true)
   writeString(8, "WAVE")
   writeString(12, "fmt ")
   view.setUint32(16, 16, true)
   view.setUint16(20, 1, true)
   view.setUint16(22, numberOfChannels, true)
   view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * numberOfChannels * bytesPerSample, true)
-  view.setUint16(32, numberOfChannels * bytesPerSample, true)
-  view.setUint16(34, bitDepth, true)
+  view.setUint32(28, byteRate, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, bitsPerSample, true)
   writeString(36, "data")
-  view.setUint32(40, length * numberOfChannels * bytesPerSample, true)
-
-  // 音声データを書き込み（量子化レベルを調整）
-  let offset = 44
-  const maxValue = Math.pow(2, bitDepth - 1) - 1
-  const minValue = -Math.pow(2, bitDepth - 1)
+  view.setUint32(40, dataSize, true)
   
+  // 音声データを書き込み
+  let offset = 44
   for (let i = 0; i < length; i++) {
     for (let channel = 0; channel < numberOfChannels; channel++) {
-      let sample = buffer.getChannelData(channel)[i]
+      const sample = buffer.getChannelData(channel)[i]
       
-      // 量子化レベルを下げてファイルサイズを削減
-      if (bitDepth === 8) {
-        sample = Math.round(sample * 127) / 127
-        const quantized = Math.max(minValue, Math.min(maxValue, sample * maxValue))
-        view.setInt8(offset, quantized)
+      if (bitsPerSample === 8) {
+        // 8bit: 0-255の範囲に変換（unsigned）
+        const intSample = Math.max(-1, Math.min(1, sample))
+        const unsignedSample = Math.round((intSample + 1) * 127.5)
+        view.setUint8(offset, unsignedSample)
         offset += 1
       } else {
-        // 16bit
-        sample = Math.round(sample * 32767) / 32767
-        const quantized = Math.max(minValue, Math.min(maxValue, sample * maxValue))
-        view.setInt16(offset, quantized, true)
+        // 16bit: -32768 to 32767の範囲に変換
+        const intSample = Math.max(-1, Math.min(1, sample))
+        const signedSample = Math.round(intSample * 32767)
+        view.setInt16(offset, signedSample, true)
         offset += 2
       }
     }
   }
-
+  
   return new Blob([arrayBuffer], { type: "audio/wav" })
 }
 
