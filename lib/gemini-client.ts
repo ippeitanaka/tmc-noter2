@@ -209,7 +209,7 @@ async function generateMinutesWithUserPrompt(
           // レスポンスからリトライ遅延情報を取得
           let retryDelay = 0
           try {
-            const retryInfo = errorData.error?.details?.find((d) => d["@type"]?.includes("RetryInfo"))
+            const retryInfo = errorData.error?.details?.find((d: any) => d["@type"]?.includes("RetryInfo"))
             if (retryInfo && retryInfo.retryDelay) {
               // "5s" のような形式から数値を抽出
               const delayStr = retryInfo.retryDelay
