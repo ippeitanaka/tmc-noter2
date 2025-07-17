@@ -2,6 +2,13 @@ import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabase-client"
 import { createServerAdminClient } from "@/lib/supabase-server"
 
+type TestResult<T = unknown> = {
+  success: boolean
+  error: string | null
+  data?: T
+  buckets?: string[]
+}
+
 export async function GET() {
   try {
     console.log("=== Supabase接続テスト開始 ===")
@@ -17,10 +24,9 @@ export async function GET() {
     console.log("環境変数チェック:", envCheck)
 
     // 1. クライアント接続テスト
-    const clientTest = { success: false, error: null, data: null }
+    const clientTest: TestResult = { success: false, error: null }
     try {
       const { data, error } = await supabase.from("audio_files").select("count", { count: "exact" }).limit(0)
-
       if (error) {
         clientTest.error = error.message
       } else {
@@ -32,11 +38,10 @@ export async function GET() {
     }
 
     // 2. サーバー管理者接続テスト
-    const adminTest = { success: false, error: null, data: null }
+    const adminTest: TestResult = { success: false, error: null }
     try {
       const adminClient = createServerAdminClient()
       const { data, error } = await adminClient.from("audio_files").select("count", { count: "exact" }).limit(0)
-
       if (error) {
         adminTest.error = error.message
       } else {
@@ -48,10 +53,9 @@ export async function GET() {
     }
 
     // 3. ストレージバケットテスト
-    const storageTest = { success: false, error: null, buckets: [] }
+    const storageTest: TestResult = { success: false, error: null, buckets: [] }
     try {
       const { data: buckets, error } = await supabase.storage.listBuckets()
-
       if (error) {
         storageTest.error = error.message
       } else {
@@ -63,7 +67,7 @@ export async function GET() {
     }
 
     // 4. テストデータの挿入試行
-    const insertTest = { success: false, error: null, data: null }
+    const insertTest: TestResult = { success: false, error: null }
     try {
       const testRecord = {
         file_path: `test/${Date.now()}-test.mp3`,
@@ -82,7 +86,6 @@ export async function GET() {
       }
 
       const { data, error } = await supabase.from("audio_files").insert([testRecord]).select()
-
       if (error) {
         insertTest.error = error.message
       } else {
@@ -112,14 +115,13 @@ export async function GET() {
         error: error instanceof Error ? error.message : String(error),
         timestamp: new Date().toISOString(),
       },
-      { status: 500 },
+      { status: 500 }
     )
   }
 }
 
 export async function DELETE() {
   try {
-    // テストデータの削除
     const { data, error } = await supabase.from("audio_files").delete().like("file_path", "test/%")
 
     if (error) {
@@ -137,7 +139,7 @@ export async function DELETE() {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       },
-      { status: 500 },
+      { status: 500 }
     )
   }
 }
