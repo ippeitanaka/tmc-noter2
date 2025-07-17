@@ -29,9 +29,13 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import AIModelSelector, { type AIModel } from "./ai-model-selector"
 
+import { SpeakerProfile, SpeakerSegment } from "@/lib/speaker-identification"
+
 interface TranscriptDisplayProps {
   transcript: string
-  minutes: {
+  speakerSegments?: SpeakerSegment[]
+  speakerProfiles?: SpeakerProfile[]
+  minutes?: {
     meetingName: string
     date: string
     participants: string
@@ -49,6 +53,8 @@ interface TranscriptDisplayProps {
 
 export default function TranscriptDisplay({
   transcript,
+  speakerSegments = [],
+  speakerProfiles = [],
   minutes,
   recordId,
   onDelete,

@@ -18,9 +18,10 @@ const COMPRESSION_THRESHOLD = 3 * 1024 * 1024 // 3MB以上で圧縮を推奨
 
 interface FileUploadFormProps {
   onTranscriptionComplete?: (transcript: string) => void
+  onAudioProcessed?: (buffer: AudioBuffer) => void
 }
 
-export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFormProps) {
+export default function FileUploadForm({ onTranscriptionComplete, onAudioProcessed }: FileUploadFormProps) {
   const [file, setFile] = useState<File | null>(null)
   const [originalFile, setOriginalFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
