@@ -27,41 +27,75 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
         setIsLoading(true)
 
         // Gemini APIキーのチェック
-        const geminiResponse = await fetch("/api/check-gemini")
-        if (geminiResponse.ok) {
-          const data = await geminiResponse.json()
-          setGeminiAvailable(data.available)
-          setGeminiTemporary(data.temporary || false)
+        try {
+          const geminiResponse = await fetch("/api/check-gemini")
+          console.log("Gemini check response status:", geminiResponse.status)
+          
+          if (geminiResponse.ok) {
+            const responseText = await geminiResponse.text()
+            console.log("Gemini response text length:", responseText.length)
+            
+            try {
+              const data = JSON.parse(responseText)
+              setGeminiAvailable(data.available)
+              setGeminiTemporary(data.temporary || false)
 
-          // 使用中のモデル情報を表示
-          if (data.modelUsed) {
-            const modelName = data.modelUsed.split("/").pop() || data.modelUsed
-            setGeminiModelInfo(`使用モデル: ${modelName}`)
+              // 使用中のモデル情報を表示
+              if (data.modelUsed) {
+                const modelName = data.modelUsed.split("/").pop() || data.modelUsed
+                setGeminiModelInfo(`使用モデル: ${modelName}`)
+              }
+
+              console.log(
+                "Gemini API availability:",
+                data.available,
+                "temporary:",
+                data.temporary,
+                "skipApiCheck:",
+                data.skipApiCheck,
+                "modelUsed:",
+                data.modelUsed,
+              )
+            } catch (parseError) {
+              console.error("Failed to parse Gemini response JSON:", parseError)
+              console.error("Response text:", responseText)
+              setGeminiAvailable(false)
+            }
+          } else {
+            const errorText = await geminiResponse.text()
+            console.error("Failed to check Gemini API:", geminiResponse.status, errorText)
+            setGeminiAvailable(false)
           }
-
-          console.log(
-            "Gemini API availability:",
-            data.available,
-            "temporary:",
-            data.temporary,
-            "skipApiCheck:",
-            data.skipApiCheck,
-            "modelUsed:",
-            data.modelUsed,
-          )
-        } else {
-          console.error("Failed to check Gemini API:", await geminiResponse.text())
+        } catch (fetchError) {
+          console.error("Gemini API check fetch error:", fetchError)
           setGeminiAvailable(false)
         }
 
         // DeepSeek APIキーのチェック
-        const deepseekResponse = await fetch("/api/check-deepseek")
-        if (deepseekResponse.ok) {
-          const data = await deepseekResponse.json()
-          setDeepseekAvailable(data.available)
-          console.log("DeepSeek API availability:", data.available)
-        } else {
-          console.error("Failed to check DeepSeek API:", await deepseekResponse.text())
+        try {
+          const deepseekResponse = await fetch("/api/check-deepseek")
+          console.log("DeepSeek check response status:", deepseekResponse.status)
+          
+          if (deepseekResponse.ok) {
+            const responseText = await deepseekResponse.text()
+            console.log("DeepSeek response text length:", responseText.length)
+            
+            try {
+              const data = JSON.parse(responseText)
+              setDeepseekAvailable(data.available)
+              console.log("DeepSeek API availability:", data.available)
+            } catch (parseError) {
+              console.error("Failed to parse DeepSeek response JSON:", parseError)
+              console.error("Response text:", responseText)
+              setDeepseekAvailable(false)
+            }
+          } else {
+            const errorText = await deepseekResponse.text()
+            console.error("Failed to check DeepSeek API:", deepseekResponse.status, errorText)
+            setDeepseekAvailable(false)
+          }
+        } catch (fetchError) {
+          console.error("DeepSeek API check fetch error:", fetchError)
           setDeepseekAvailable(false)
         }
 

@@ -2,22 +2,29 @@ import { NextResponse } from "next/server"
 
 export async function GET(req: Request) {
   try {
+    console.log("[CHECK-GEMINI] Starting Gemini API check")
+    
     const apiKey = process.env.GEMINI_API_KEY
 
     if (!apiKey) {
-      console.log("Gemini API key is not set")
-      return NextResponse.json({ available: false, message: "APIキーが設定されていません" })
+      console.log("[CHECK-GEMINI] Gemini API key is not set")
+      return NextResponse.json({ 
+        available: false, 
+        message: "APIキーが設定されていません",
+        timestamp: new Date().toISOString()
+      })
     }
 
     const url = new URL(req.url)
     const skipCheck = url.searchParams.get("skipCheck") === "true"
 
     if (skipCheck) {
-      console.log("Skipping API test as requested, assuming API is available")
+      console.log("[CHECK-GEMINI] Skipping API test as requested, assuming API is available")
       return NextResponse.json({
         available: true,
         message: "Gemini APIキーが設定されています",
         skipApiCheck: true,
+        timestamp: new Date().toISOString()
       })
     }
 
@@ -26,6 +33,8 @@ export async function GET(req: Request) {
     })
 
     try {
+      console.log("[CHECK-GEMINI] Testing API connection...")
+      
       const result = await Promise.race([
         fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`, {
           method: "GET",
@@ -41,16 +50,25 @@ export async function GET(req: Request) {
       }
 
       const modelsResponse = result
+      console.log("[CHECK-GEMINI] Models API response status:", modelsResponse.status)
 
       if (!modelsResponse.ok) {
-        const errorData = await modelsResponse.json().catch(() => ({}))
-        console.error("Failed to list models:", modelsResponse.status, errorData)
+        let errorData = {}
+        try {
+          errorData = await modelsResponse.json()
+        } catch (parseError) {
+          console.error("[CHECK-GEMINI] Failed to parse error response:", parseError)
+          errorData = { parseError: "Failed to parse response as JSON" }
+        }
+        
+        console.error("[CHECK-GEMINI] Failed to list models:", modelsResponse.status, errorData)
 
         if (modelsResponse.status === 401 || modelsResponse.status === 403) {
           return NextResponse.json({
             available: false,
             message: "Gemini APIキーが無効です",
             error: errorData,
+            timestamp: new Date().toISOString()
           })
         }
 
@@ -59,11 +77,24 @@ export async function GET(req: Request) {
           message: "Gemini APIキーは設定されていますが、モデルリストの取得に失敗しました",
           warning: JSON.stringify(errorData),
           skipApiCheck: true,
+          timestamp: new Date().toISOString()
         })
       }
 
-      const modelsData = await modelsResponse.json()
-      console.log("Available models:", modelsData)
+      let modelsData
+      try {
+        modelsData = await modelsResponse.json()
+      } catch (parseError) {
+        console.error("[CHECK-GEMINI] Failed to parse models response:", parseError)
+        return NextResponse.json({
+          available: true,
+          message: "Gemini APIキーは設定されていますが、レスポンスの解析に失敗しました",
+          skipApiCheck: true,
+          timestamp: new Date().toISOString()
+        })
+      }
+      
+      console.log("[CHECK-GEMINI] Available models:", modelsData.models?.length || 0)
 
       const availableModels = modelsData.models || []
       const modelNames = availableModels.map((model: any) => model.name)
@@ -94,10 +125,11 @@ export async function GET(req: Request) {
         return NextResponse.json({
           available: false,
           message: "利用可能なGeminiモデルが見つかりません",
+          timestamp: new Date().toISOString()
         })
       }
 
-      console.log("Using model:", modelToUse)
+      console.log("[CHECK-GEMINI] Using model for test:", modelToUse)
 
       const contentResult = await Promise.race([
         fetch(`https://generativelanguage.googleapis.com/v1/${modelToUse}:generateContent?key=${apiKey}`, {
@@ -129,19 +161,28 @@ export async function GET(req: Request) {
       }
 
       const response = contentResult
+      console.log("[CHECK-GEMINI] Content generation response status:", response.status)
 
       if (response.ok) {
-        console.log("Gemini API connection successful")
+        console.log("[CHECK-GEMINI] Gemini API connection successful")
         return NextResponse.json({
           available: true,
           message: "Gemini APIは利用可能です",
           testedConnection: true,
           modelUsed: modelToUse,
           availableModels: modelNames,
+          timestamp: new Date().toISOString()
         })
       } else {
-        const errorData = await response.json().catch(() => ({}))
-        console.error("Gemini API error:", response.status, errorData)
+        let errorData = {}
+        try {
+          errorData = await response.json()
+        } catch (parseError) {
+          console.error("[CHECK-GEMINI] Failed to parse content generation error response:", parseError)
+          errorData = { parseError: "Failed to parse response as JSON" }
+        }
+        
+        console.error("[CHECK-GEMINI] Gemini API error:", response.status, errorData)
 
         if (response.status === 503) {
           return NextResponse.json({
@@ -149,6 +190,7 @@ export async function GET(req: Request) {
             temporary: true,
             message: "Gemini APIは一時的に利用できません。しばらく後にお試しください。",
             error: errorData,
+            timestamp: new Date().toISOString()
           })
         }
 
@@ -156,10 +198,11 @@ export async function GET(req: Request) {
           available: false,
           message: `Gemini APIエラー: ${response.status}`,
           error: errorData,
+          timestamp: new Date().toISOString()
         })
       }
     } catch (apiError: any) {
-      console.error("Gemini API request failed:", apiError)
+      console.error("[CHECK-GEMINI] Gemini API request failed:", apiError)
 
       if (apiError.message === "Request timeout" || String(apiError).includes("timeout")) {
         return NextResponse.json({
@@ -167,6 +210,7 @@ export async function GET(req: Request) {
           message: "Gemini APIキーが設定されていますが、応答が遅いです",
           skipApiCheck: true,
           timeout: true,
+          timestamp: new Date().toISOString()
         })
       }
 
@@ -175,15 +219,21 @@ export async function GET(req: Request) {
         message: "Gemini APIへの接続に問題がありますが、キーは設定されています",
         warning: String(apiError),
         skipApiCheck: true,
+        timestamp: new Date().toISOString()
       })
     }
   } catch (error: any) {
-    console.error("Gemini API check error:", error)
-    return NextResponse.json({
+    console.error("[CHECK-GEMINI] Gemini API check error:", error)
+    
+    // 安全なエラーレスポンス
+    const errorResponse = {
       available: true,
       message: "Gemini APIキーは設定されていますが、チェック中にエラーが発生しました",
-      warning: String(error),
+      warning: error instanceof Error ? error.message : String(error),
       skipApiCheck: true,
-    })
+      timestamp: new Date().toISOString()
+    }
+    
+    return NextResponse.json(errorResponse)
   }
 }

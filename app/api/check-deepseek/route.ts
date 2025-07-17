@@ -2,19 +2,29 @@ import { NextResponse } from "next/server"
 
 export async function GET() {
   try {
+    console.log("[CHECK-DEEPSEEK] Starting DeepSeek API check")
+    
     // サーバーサイドでDeepSeek APIキーの有効性をチェック
     const apiKey = process.env.DEEPSEEK_API_KEY
 
     if (!apiKey) {
-      console.log("DeepSeek API key is not set")
-      return NextResponse.json({ available: false, message: "APIキーが設定されていません" })
+      console.log("[CHECK-DEEPSEEK] DeepSeek API key is not set")
+      return NextResponse.json({ 
+        available: false, 
+        message: "APIキーが設定されていません",
+        timestamp: new Date().toISOString()
+      })
     }
 
-    console.log("DeepSeek API key is set, testing connection...")
+    console.log("[CHECK-DEEPSEEK] DeepSeek API key is set, testing connection...")
 
     // APIキーが設定されていれば、利用可能と見なす（実際のAPIテストはスキップ）
     // これにより、無効なAPIキーでもエラーが発生しなくなります
-    return NextResponse.json({ available: true, message: "DeepSeek APIキーが設定されています" })
+    return NextResponse.json({ 
+      available: true, 
+      message: "DeepSeek APIキーが設定されています",
+      timestamp: new Date().toISOString()
+    })
 
     /* 実際のAPIテストはコメントアウト
     try {
@@ -57,13 +67,15 @@ export async function GET() {
     }
     */
   } catch (error) {
-    console.error("DeepSeek API check error:", error)
-    return NextResponse.json(
-      {
-        available: false,
-        message: `DeepSeek APIチェック中にエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`,
-      },
-      { status: 500 },
-    )
+    console.error("[CHECK-DEEPSEEK] DeepSeek API check error:", error)
+    
+    // 安全なエラーレスポンス
+    const errorResponse = {
+      available: false,
+      message: `DeepSeek APIチェック中にエラーが発生しました: ${error instanceof Error ? error.message : String(error)}`,
+      timestamp: new Date().toISOString()
+    }
+    
+    return NextResponse.json(errorResponse, { status: 500 })
   }
 }
