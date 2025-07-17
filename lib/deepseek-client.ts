@@ -185,8 +185,8 @@ function mergeSegmentResults(results: any[]): {
   // 参加者を全セグメントからマージ（重複を除去）
   const allParticipants = new Set<string>()
   results.forEach((result) => {
-    const participants = result.participants.split(/[、,、]/).map((p) => p.trim())
-    participants.forEach((p) => {
+    const participants = result.participants.split(/[、,、]/).map((p: string) => p.trim())
+    participants.forEach((p: string) => {
       if (p && p !== "不明") {
         allParticipants.add(p)
       }
@@ -206,7 +206,7 @@ function mergeSegmentResults(results: any[]): {
     }
 
     // 各セグメントの主要ポイントを追加
-    result.mainPoints.forEach((point) => {
+    result.mainPoints.forEach((point: string) => {
       mainPoints.push(point)
     })
   })
