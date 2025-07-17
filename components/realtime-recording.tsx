@@ -62,6 +62,8 @@ export default function RealtimeRecording({
   const [isSaving, setIsSaving] = useState(false)
   const [microphonePermission, setMicrophonePermission] = useState<'granted' | 'denied' | 'prompt'>('prompt')
   const [audioLevelData, setAudioLevelData] = useState({ level: 0, bars: Array(10).fill(0) })
+  const [speechRecognition, setSpeechRecognition] = useState<any>(null)
+  const [isTranscribing, setIsTranscribing] = useState(false)
   const animationRef = useRef<number>(0)
   const { toast } = useToast()
 
@@ -70,6 +72,45 @@ export default function RealtimeRecording({
     const now = new Date()
     const defaultName = `録音_${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}_${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`
     setRecordingName(defaultName)
+
+    // Web Speech APIの初期化
+    if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+      const recognition = new SpeechRecognition()
+      
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = 'ja-JP'
+      
+      recognition.onresult = (event: any) => {
+        let interimTranscript = ''
+        let finalTranscript = ''
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript
+          } else {
+            interimTranscript += transcript
+          }
+        }
+        
+        if (finalTranscript) {
+          setTranscript(prev => prev + (prev ? ' ' : '') + finalTranscript)
+        }
+      }
+      
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error)
+        setIsTranscribing(false)
+      }
+      
+      recognition.onend = () => {
+        setIsTranscribing(false)
+      }
+      
+      setSpeechRecognition(recognition)
+    }
 
     return () => {
       if (recorder) {
@@ -117,6 +158,17 @@ export default function RealtimeRecording({
         setError(null)
         setTranscript("")
         setChunks([])
+        
+        // リアルタイム文字起こしを開始
+        if (enableTranscription && speechRecognition) {
+          try {
+            speechRecognition.start()
+            setIsTranscribing(true)
+          } catch (error) {
+            console.error('Speech recognition start error:', error)
+          }
+        }
+        
         toast({
           title: "録音開始",
           description: "録音を開始しました",
@@ -136,6 +188,13 @@ export default function RealtimeRecording({
     if (recorder) {
       try {
         setIsSaving(true)
+        
+        // リアルタイム文字起こしを停止
+        if (speechRecognition && isTranscribing) {
+          speechRecognition.stop()
+          setIsTranscribing(false)
+        }
+        
         await recorder.stopRecording()
         
         if (onRecordingComplete) {
@@ -405,6 +464,12 @@ export default function RealtimeRecording({
                 <Badge variant="outline">
                   チャンク {recordingState.currentChunk + 1}
                 </Badge>
+                
+                {enableTranscription && (
+                  <Badge variant={isTranscribing ? "default" : "secondary"}>
+                    {isTranscribing ? "文字起こし中" : "文字起こし停止中"}
+                  </Badge>
+                )}
               </div>
 
               <div className="text-sm text-gray-600">
@@ -474,13 +539,27 @@ export default function RealtimeRecording({
         )}
 
         {/* 文字起こし結果 */}
-        {enableTranscription && transcript && (
+        {enableTranscription && (
           <div className="space-y-2">
-            <Label>文字起こし結果</Label>
-            <EditableTranscript
-              initialText={transcript}
-              onSave={(text: string) => setTranscript(text)}
-            />
+            <div className="flex items-center gap-2">
+              <Label>文字起こし結果</Label>
+              {isTranscribing && (
+                <div className="flex items-center gap-1 text-xs text-blue-600">
+                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
+                  リアルタイム文字起こし中
+                </div>
+              )}
+            </div>
+            {transcript ? (
+              <EditableTranscript
+                initialText={transcript}
+                onSave={(text: string) => setTranscript(text)}
+              />
+            ) : (
+              <div className="p-4 border rounded-lg bg-gray-50 text-gray-500 text-center">
+                {enableTranscription ? "音声を検出すると文字起こしが開始されます" : "設定で文字起こしを有効にしてください"}
+              </div>
+            )}
           </div>
         )}
 
