@@ -1,8 +1,8 @@
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
-  .eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF3ZXJ2bmlzbnlhYmJqb3pyc3V1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQyNzQ0OTAsImV4cCI6MjA1OTg1MDQ5MH0
-  .iVWRKXegm93RqAiNaPYR49rf - PuGaR37jgHlKv84dSw
-\
-"
+import { createClient } from "@supabase/supabase-js"
+
+// Supabase設定
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
 // 環境変数が設定されていない場合の警告
 if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
