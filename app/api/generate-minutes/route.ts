@@ -22,7 +22,6 @@ export async function POST(req: Request) {
 文字起こし:
 ${transcript}`
 
-    // OpenAI APIを直接使用
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -52,26 +51,23 @@ ${transcript}`
     const result = await response.json()
     const text = result.choices[0].message.content
 
-    // 議事録をパースして構造化
     const meetingName = text.match(/会議名[：:]\s*(.+)/)?.[1] || "会議"
     const date = text.match(/日時[：:]\s*(.+)/)?.[1] || new Date().toLocaleDateString()
     const participants = text.match(/参加者[：:]\s*(.+)/)?.[1] || "不明"
     const agenda = text.match(/議題[：:]\s*(.+)/)?.[1] || "不明"
 
-    // 主な発言を抽出
+    // 主な発言の抽出（←ここを修正）
     const mainPointsMatch = text.match(/主な発言[：:][\s\S]*?(?=決定事項|$)/i)
     const mainPointsText = mainPointsMatch ? mainPointsMatch[0] : ""
     const mainPoints = mainPointsText
       .replace(/主な発言[：:]/i, "")
       .split(/[\n・]/)
-      .map((point) => point.trim())
-      .filter((point) => point.length > 0)
+      .map((point: string) => point.trim()) // 👈 型注釈追加！
+      .filter((point: string) => point.length > 0)
 
-    // 決定事項を抽出
     const decisionsMatch = text.match(/決定事項[：:][\s\S]*?(?=TODO|$)/i)
     const decisions = decisionsMatch ? decisionsMatch[0].replace(/決定事項[：:]/i, "").trim() : "特になし"
 
-    // TODOを抽出
     const todosMatch = text.match(/TODO[：:][\s\S]*/i)
     const todos = todosMatch ? todosMatch[0].replace(/TODO[：:]/i, "").trim() : "特になし"
 
