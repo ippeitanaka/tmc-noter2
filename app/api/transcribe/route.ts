@@ -71,12 +71,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // OpenAI APIキーの確認
-    if (!process.env.OPENAI_API_KEY) {
-      console.error("OpenAI API key not configured")
-      return NextResponse.json({ error: "OpenAI APIキーが設定されていません" }, { status: 500 })
-    }
-
     console.log("Calling OpenAI Whisper API...")
 
     // OpenAI Whisper APIを呼び出し
