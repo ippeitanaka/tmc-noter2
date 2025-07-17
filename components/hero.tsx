@@ -96,7 +96,7 @@ function Hero() {
           {/* Supported formats */}
           <div className="mt-12 p-6 bg-white/10 backdrop-blur-sm rounded-xl border border-white/20 animate-fade-in-up">
             <h3 className="text-lg font-semibold text-white mb-3">対応ファイル形式</h3>
-            <p className="text-blue-100">MP3, WAV, M4A, FLAC, OGG, WEBM (最大10MB)</p>
+            <p className="text-blue-100">MP3, WAV, M4A, FLAC, OGG, WEBM (最大5MB)</p>
           </div>
         </div>
       </div>

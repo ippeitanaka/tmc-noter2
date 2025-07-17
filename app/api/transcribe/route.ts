@@ -7,6 +7,20 @@ export async function POST(request: NextRequest) {
   try {
     console.log("=== TRANSCRIBE API START ===")
 
+    // リクエストサイズの事前チェック
+    const contentLength = request.headers.get('content-length')
+    if (contentLength) {
+      const size = parseInt(contentLength)
+      const MAX_REQUEST_SIZE = 6 * 1024 * 1024 // 6MB (FormData overhead を考慮)
+      if (size > MAX_REQUEST_SIZE) {
+        console.error("Request size too large:", size)
+        return NextResponse.json(
+          { error: "ファイルサイズが大きすぎます。5MB以下のファイルを使用してください。" },
+          { status: 413 }
+        )
+      }
+    }
+
     // OpenAI API keyのチェック
     if (!process.env.OPENAI_API_KEY) {
       console.error("OPENAI_API_KEY environment variable is not set")
@@ -35,8 +49,8 @@ export async function POST(request: NextRequest) {
       sizeMB: (file.size / (1024 * 1024)).toFixed(2),
     })
 
-    // ファイルサイズチェック（10MB制限 - Vercel制限を考慮）
-    const MAX_SIZE = 10 * 1024 * 1024 // 10MB
+    // ファイルサイズチェック（5MB制限 - Vercel制限を考慮）
+    const MAX_SIZE = 5 * 1024 * 1024 // 5MB
     if (file.size > MAX_SIZE) {
       console.error("=== CRITICAL: FILE SIZE EXCEEDED ===", {
         fileSize: file.size,

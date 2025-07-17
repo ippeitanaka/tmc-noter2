@@ -10,8 +10,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, FileAudio, X, CheckCircle, AlertTriangle } from "lucide-react"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB (Vercel制限を考慮)
-const COMPRESSION_THRESHOLD = 5 * 1024 * 1024 // 5MB以上で圧縮を推奨
+const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB (Vercel制限を考慮してさらに削減)
+const COMPRESSION_THRESHOLD = 3 * 1024 * 1024 // 3MB以上で圧縮を推奨
 
 interface FileUploadFormProps {
   onTranscriptionComplete?: (transcript: string) => void
@@ -35,7 +35,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return `ファイルサイズが大きすぎます。最大10MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
+      return `ファイルサイズが大きすぎます。最大5MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
     }
 
     return null
@@ -90,7 +90,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
 
     try {
       const formData = new FormData()
-      formData.append("audio", file)
+      formData.append("file", file)  // APIルートで期待されているキー名に修正
 
       const xhr = new XMLHttpRequest()
 
@@ -111,7 +111,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
             setError("文字起こしに失敗しました。")
           }
         } else if (xhr.status === 413) {
-          setError("ファイルサイズが大きすぎます。25MB以下のファイルを使用してください。")
+          setError("ファイルサイズが大きすぎます。5MB以下のファイルを使用してください。")
         } else {
           try {
             const errorResponse = JSON.parse(xhr.responseText)
@@ -179,7 +179,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
             <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-lg font-medium text-gray-700 mb-2">ファイルをタップ</p>
             <p className="text-sm text-gray-500 mb-4">または、ドラッグ&ドロップ</p>
-            <p className="text-xs text-gray-400">対応形式: {SUPPORTED_FORMATS.join(", ").toUpperCase()} (最大10MB)</p>
+            <p className="text-xs text-gray-400">対応形式: {SUPPORTED_FORMATS.join(", ").toUpperCase()} (最大5MB)</p>
             <input
               ref={fileInputRef}
               type="file"
