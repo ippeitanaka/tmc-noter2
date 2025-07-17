@@ -35,8 +35,8 @@ export async function POST(request: NextRequest) {
       sizeMB: (file.size / (1024 * 1024)).toFixed(2),
     })
 
-    // ファイルサイズチェック（25MB制限）
-    const MAX_SIZE = 25 * 1024 * 1024 // 25MB
+    // ファイルサイズチェック（10MB制限 - Vercel制限を考慮）
+    const MAX_SIZE = 10 * 1024 * 1024 // 10MB
     if (file.size > MAX_SIZE) {
       console.error("=== CRITICAL: FILE SIZE EXCEEDED ===", {
         fileSize: file.size,

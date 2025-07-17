@@ -26,6 +26,10 @@ const nextConfig = {
     ignoreBuildErrors: false,
   },
   serverExternalPackages: ["@ffmpeg/ffmpeg", "@ffmpeg/util"],
+  // ファイルアップロード用の設定
+  experimental: {
+    serverComponentsExternalPackages: ["@ffmpeg/ffmpeg", "@ffmpeg/util"],
+  },
 }
 
 module.exports = nextConfig
