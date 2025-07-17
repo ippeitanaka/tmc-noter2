@@ -73,35 +73,102 @@ export default function RealtimeRecording({
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       const recognition = new SpeechRecognition()
       
+      // 高精度設定
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = 'ja-JP'
+      
+      // 高精度設定（型エラーを避けるためにanyでキャスト）
+      try {
+        (recognition as any).maxAlternatives = 3 // 複数の候補を取得
+      } catch (e) {
+        console.log('maxAlternatives not supported')
+      }
+      
+      // 音声認識の精度向上設定
+      if ('webkitSpeechRecognition' in window) {
+        (recognition as any).serviceType = 'search' // 検索用の高精度モード
+      }
+      
+      let finalTranscriptBuffer = ''
+      let lastResultIndex = 0
       
       recognition.onresult = (event: any) => {
         let interimTranscript = ''
         let finalTranscript = ''
         
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript
+        // 新しい結果のみを処理
+        for (let i = lastResultIndex; i < event.results.length; i++) {
+          const result = event.results[i]
+          
+          // 最も信頼度の高い結果を選択
+          let bestTranscript = result[0].transcript
+          let bestConfidence = result[0].confidence || 0
+          
+          for (let j = 1; j < result.length; j++) {
+            if (result[j].confidence > bestConfidence) {
+              bestTranscript = result[j].transcript
+              bestConfidence = result[j].confidence
+            }
+          }
+          
+          if (result.isFinal) {
+            finalTranscript += bestTranscript
           } else {
-            interimTranscript += transcript
+            interimTranscript += bestTranscript
           }
         }
         
+        // 最終的な結果のみを文字起こしに追加
         if (finalTranscript) {
+          finalTranscriptBuffer += finalTranscript
           updateTranscript(transcript + (transcript ? ' ' : '') + finalTranscript)
+          lastResultIndex = event.results.length
         }
       }
       
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error)
-        setIsTranscribing(false)
+        
+        // エラーに応じた処理
+        if (event.error === 'no-speech') {
+          // 音声が検出されない場合は再開
+          setTimeout(() => {
+            if (isTranscribing) {
+              try {
+                recognition.start()
+              } catch (e) {
+                console.log('Recognition already started')
+              }
+            }
+          }, 1000)
+        } else if (event.error === 'audio-capture') {
+          setError('マイクにアクセスできません。マイクの設定を確認してください。')
+          setIsTranscribing(false)
+        } else if (event.error === 'not-allowed') {
+          setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。')
+          setIsTranscribing(false)
+        } else {
+          setIsTranscribing(false)
+        }
       }
       
       recognition.onend = () => {
-        setIsTranscribing(false)
+        // 録音中の場合は自動的に再開
+        if (isRecording && enableTranscription) {
+          try {
+            recognition.start()
+          } catch (e) {
+            console.log('Recognition restart failed:', e)
+            setIsTranscribing(false)
+          }
+        } else {
+          setIsTranscribing(false)
+        }
+      }
+      
+      recognition.onstart = () => {
+        setIsTranscribing(true)
       }
       
       setSpeechRecognition(recognition)
@@ -128,8 +195,24 @@ export default function RealtimeRecording({
           try {
             speechRecognition.start()
             setIsTranscribing(true)
+            
+            // 自動再開のタイマーを設定
+            const restartInterval = setInterval(() => {
+              if (isRecording && enableTranscription && !isTranscribing) {
+                try {
+                  speechRecognition.start()
+                } catch (e) {
+                  console.log('Speech recognition restart failed:', e)
+                }
+              }
+              if (!isRecording) {
+                clearInterval(restartInterval)
+              }
+            }, 5000) // 5秒ごとにチェック
+            
           } catch (error) {
             console.error('Speech recognition start error:', error)
+            setError('音声認識の開始に失敗しました。')
           }
         }
         
@@ -213,6 +296,45 @@ export default function RealtimeRecording({
     }
   }
 
+  const handleClearRecording = async () => {
+    try {
+      // 録音停止
+      if (isRecording) {
+        await stopRecording()
+      }
+      
+      // 音声認識停止
+      if (speechRecognition && isTranscribing) {
+        speechRecognition.stop()
+        setIsTranscribing(false)
+      }
+      
+      // データをクリア
+      clearRecording()
+      
+      // ローカルストレージからも削除
+      localStorage.removeItem('recording-transcript')
+      localStorage.removeItem('recording-chunks')
+      
+      // 録音名をリセット
+      const now = new Date()
+      const defaultName = `録音_${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}_${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`
+      setRecordingName(defaultName)
+      
+      toast({
+        title: "録音データ削除",
+        description: "録音データを削除しました",
+      })
+    } catch (error) {
+      console.error("削除エラー:", error)
+      toast({
+        title: "削除エラー",
+        description: "録音データの削除に失敗しました",
+        variant: "destructive",
+      })
+    }
+  }
+
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
@@ -288,7 +410,7 @@ export default function RealtimeRecording({
               id="recordingName"
               value={recordingName}
               onChange={(e) => setRecordingName(e.target.value)}
-              disabled={recordingState.isRecording}
+              disabled={isRecording}
             />
           </div>
           <div className="flex items-center gap-4">
@@ -297,7 +419,7 @@ export default function RealtimeRecording({
                 id="autoSave"
                 checked={autoSave}
                 onCheckedChange={setAutoSave}
-                disabled={recordingState.isRecording}
+                disabled={isRecording}
               />
               <Label htmlFor="autoSave">自動保存</Label>
             </div>
@@ -308,12 +430,22 @@ export default function RealtimeRecording({
             >
               <Settings className="w-4 h-4" />
             </Button>
+            {(transcript || chunks.length > 0) && (
+              <Button
+                onClick={handleClearRecording}
+                variant="destructive"
+                size="sm"
+                disabled={isRecording}
+              >
+                削除
+              </Button>
+            )}
           </div>
         </div>
 
         {/* 録音コントロール */}
         <div className="flex items-center gap-4">
-          {!recordingState.isRecording ? (
+          {!isRecording ? (
             <Button
               onClick={handleStartRecording}
               disabled={microphonePermission === 'denied'}
@@ -437,7 +569,7 @@ export default function RealtimeRecording({
                   max={60}
                   step={5}
                   className="w-full"
-                  disabled={recordingState.isRecording}
+                  disabled={isRecording}
                 />
               </div>
 
@@ -447,7 +579,7 @@ export default function RealtimeRecording({
                     id="enableTranscription"
                     checked={enableTranscription}
                     onCheckedChange={setEnableTranscription}
-                    disabled={recordingState.isRecording}
+                    disabled={isRecording}
                   />
                   <Label htmlFor="enableTranscription">リアルタイム文字起こし</Label>
                 </div>
@@ -457,7 +589,7 @@ export default function RealtimeRecording({
                     id="enableSpeakerID"
                     checked={enableSpeakerID}
                     onCheckedChange={setEnableSpeakerID}
-                    disabled={recordingState.isRecording}
+                    disabled={isRecording}
                   />
                   <Label htmlFor="enableSpeakerID">話者識別</Label>
                 </div>
@@ -537,7 +669,7 @@ export default function RealtimeRecording({
         )}
 
         {/* 結果が空の場合のメッセージ */}
-        {!recordingState.isRecording && chunks.length === 0 && (
+        {!isRecording && chunks.length === 0 && (
           <div className="text-center py-8 text-gray-500">
             <Mic className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>録音を開始するには「録音開始」ボタンをクリックしてください</p>

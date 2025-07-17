@@ -12,10 +12,10 @@ import { processAudioFile } from "@/lib/ffmpeg-helper"
 import { TranscriptEditor } from "./editable-transcript"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
-const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4MB (最終的なアップロード制限)
-const MAX_INPUT_FILE_SIZE = 50 * 1024 * 1024 // 50MB (入力ファイル制限 - 自動圧縮あり)
-const CHUNK_SIZE = 4 * 1024 * 1024 // 4MB chunks (Vercel制限を考慮)
-const COMPRESSION_THRESHOLD = 3 * 1024 * 1024 // 3MB以上で圧縮を推奨
+const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25MB (アップロード制限を拡大)
+const MAX_INPUT_FILE_SIZE = 100 * 1024 * 1024 // 100MB (入力ファイル制限を拡大)
+const CHUNK_SIZE = 20 * 1024 * 1024 // 20MB chunks (分割サイズを拡大)
+const COMPRESSION_THRESHOLD = 10 * 1024 * 1024 // 10MB以上で圧縮を推奨
 
 interface FileUploadFormProps {
   onTranscriptionComplete?: (transcript: string) => void
@@ -43,7 +43,7 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     }
 
     if (file.size > MAX_INPUT_FILE_SIZE) {
-      return `ファイルサイズが大きすぎます。最大50MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
+      return `ファイルサイズが大きすぎます。最大100MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
     }
 
     return null
@@ -70,7 +70,7 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
         
         const { blob, type } = await processAudioFile(selectedFile, {
           compress: true,
-          targetSizeMB: 3, // 3MB以下に圧縮
+          targetSizeMB: 20, // 20MB以下に圧縮
         })
 
         const compressedFile = new File([blob], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
@@ -86,7 +86,7 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
           
           const { blob: blob2, type: type2 } = await processAudioFile(selectedFile, {
             compress: true,
-            targetSizeMB: 2, // 2MB以下に圧縮
+            targetSizeMB: 15, // 15MB以下に圧縮
           })
           
           const compressedFile2 = new File([blob2], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
@@ -157,53 +157,193 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     setUploadProgress(0)
 
     try {
-      const formData = new FormData()
-      formData.append("file", file)  // APIルートで期待されているキー名に修正
-
-      const xhr = new XMLHttpRequest()
-
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const progress = (event.loaded / event.total) * 100
-          setUploadProgress(progress)
-        }
+      // 大きなファイルの場合は分割処理
+      if (file.size > CHUNK_SIZE) {
+        await uploadLargeFile(file)
+      } else {
+        await uploadSingleFile(file)
       }
-
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText)
-          if (response.transcript) {
-            setTranscript(response.transcript)
-            onTranscriptionComplete?.(response.transcript)
-          } else {
-            setError("文字起こしに失敗しました。")
-          }
-        } else if (xhr.status === 413) {
-          setError("ファイルサイズが大きすぎます。自動圧縮に失敗しました。")
-        } else {
-          try {
-            const errorResponse = JSON.parse(xhr.responseText)
-            setError(errorResponse.error || "文字起こしに失敗しました。")
-          } catch (e) {
-            // JSONパースエラーの場合
-            setError(`サーバーエラーが発生しました。(ステータス: ${xhr.status})`)
-          }
-        }
-        setIsUploading(false)
-      }
-
-      xhr.onerror = () => {
-        setError("ネットワークエラーが発生しました。")
-        setIsUploading(false)
-      }
-
-      xhr.open("POST", "/api/transcribe")
-      xhr.send(formData)
-    } catch (err) {
-      console.error("Upload error:", err)
-      setError("アップロードに失敗しました。")
+    } catch (error) {
+      console.error("Upload error:", error)
+      setError("アップロード中にエラーが発生しました。")
       setIsUploading(false)
     }
+  }
+
+  const uploadSingleFile = async (file: File) => {
+    const formData = new FormData()
+    formData.append("file", file)
+
+    const xhr = new XMLHttpRequest()
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const progress = (event.loaded / event.total) * 100
+        setUploadProgress(progress)
+      }
+    }
+
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        const response = JSON.parse(xhr.responseText)
+        if (response.transcript) {
+          setTranscript(response.transcript)
+          onTranscriptionComplete?.(response.transcript)
+        } else {
+          setError("文字起こしに失敗しました。")
+        }
+      } else if (xhr.status === 413) {
+        setError("ファイルサイズが大きすぎます。自動圧縮に失敗しました。")
+      } else {
+        try {
+          const errorResponse = JSON.parse(xhr.responseText)
+          setError(errorResponse.error || "文字起こしに失敗しました。")
+        } catch (e) {
+          setError(`サーバーエラーが発生しました。(ステータス: ${xhr.status})`)
+        }
+      }
+      setIsUploading(false)
+    }
+
+    xhr.onerror = () => {
+      setError("ネットワークエラーが発生しました。")
+      setIsUploading(false)
+    }
+
+    xhr.open("POST", "/api/transcribe")
+    xhr.send(formData)
+  }
+
+  const uploadLargeFile = async (file: File) => {
+    // 大きなファイルを分割して処理
+    const chunks = await splitAudioFile(file)
+    const transcripts: string[] = []
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const progress = ((i + 1) / chunks.length) * 100
+      setUploadProgress(progress)
+
+      try {
+        const transcript = await transcribeChunk(chunk, i)
+        transcripts.push(transcript)
+      } catch (error) {
+        console.error(`Error transcribing chunk ${i}:`, error)
+        setError(`チャンク ${i + 1} の処理中にエラーが発生しました。`)
+        setIsUploading(false)
+        return
+      }
+    }
+
+    // 全てのチャンクの結果を結合
+    const finalTranscript = transcripts.join(' ')
+    setTranscript(finalTranscript)
+    onTranscriptionComplete?.(finalTranscript)
+    setIsUploading(false)
+  }
+
+  const splitAudioFile = async (file: File): Promise<Blob[]> => {
+    // 音声ファイルを時間で分割（5分ごと）
+    const chunks: Blob[] = []
+    const chunkDuration = 300 // 5分 = 300秒
+    
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const arrayBuffer = await file.arrayBuffer()
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+      
+      const sampleRate = audioBuffer.sampleRate
+      const chunkSamples = chunkDuration * sampleRate
+      const totalChunks = Math.ceil(audioBuffer.length / chunkSamples)
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSamples
+        const end = Math.min(start + chunkSamples, audioBuffer.length)
+        
+        const chunkBuffer = audioContext.createBuffer(
+          audioBuffer.numberOfChannels,
+          end - start,
+          sampleRate
+        )
+        
+        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+          const channelData = audioBuffer.getChannelData(channel)
+          const chunkData = chunkBuffer.getChannelData(channel)
+          for (let j = 0; j < end - start; j++) {
+            chunkData[j] = channelData[start + j]
+          }
+        }
+        
+        // AudioBufferをWAVファイルに変換
+        const wavBlob = await audioBufferToWav(chunkBuffer)
+        chunks.push(wavBlob)
+      }
+      
+      return chunks
+    } catch (error) {
+      console.error("Error splitting audio file:", error)
+      throw new Error("音声ファイルの分割に失敗しました。")
+    }
+  }
+
+  const audioBufferToWav = (buffer: AudioBuffer): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const length = buffer.length
+      const numberOfChannels = buffer.numberOfChannels
+      const sampleRate = buffer.sampleRate
+      const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2)
+      const view = new DataView(arrayBuffer)
+      
+      // WAVヘッダーを書き込み
+      const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i))
+        }
+      }
+      
+      writeString(0, 'RIFF')
+      view.setUint32(4, 36 + length * numberOfChannels * 2, true)
+      writeString(8, 'WAVE')
+      writeString(12, 'fmt ')
+      view.setUint32(16, 16, true)
+      view.setUint16(20, 1, true)
+      view.setUint16(22, numberOfChannels, true)
+      view.setUint32(24, sampleRate, true)
+      view.setUint32(28, sampleRate * numberOfChannels * 2, true)
+      view.setUint16(32, numberOfChannels * 2, true)
+      view.setUint16(34, 16, true)
+      writeString(36, 'data')
+      view.setUint32(40, length * numberOfChannels * 2, true)
+      
+      // 音声データを書き込み
+      let offset = 44
+      for (let i = 0; i < length; i++) {
+        for (let channel = 0; channel < numberOfChannels; channel++) {
+          const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]))
+          view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true)
+          offset += 2
+        }
+      }
+      
+      resolve(new Blob([arrayBuffer], { type: 'audio/wav' }))
+    })
+  }
+
+  const transcribeChunk = async (chunk: Blob, index: number): Promise<string> => {
+    const formData = new FormData()
+    formData.append("file", chunk, `chunk_${index}.wav`)
+
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const result = await response.json()
+    return result.transcript || ""
   }
 
   const removeFile = () => {

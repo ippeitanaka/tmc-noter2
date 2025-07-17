@@ -11,11 +11,11 @@ export async function POST(request: NextRequest) {
     const contentLength = request.headers.get('content-length')
     if (contentLength) {
       const size = parseInt(contentLength)
-      const MAX_REQUEST_SIZE = 5 * 1024 * 1024 // 5MB (FormData overhead を考慮)
+      const MAX_REQUEST_SIZE = 30 * 1024 * 1024 // 30MB (FormData overhead を考慮)
       if (size > MAX_REQUEST_SIZE) {
         console.error("Request size too large:", size)
         return NextResponse.json(
-          { error: "ファイルサイズが大きすぎます。4MB以下のファイルを使用してください。" },
+          { error: "ファイルサイズが大きすぎます。25MB以下のファイルを使用してください。" },
           { status: 413 }
         )
       }
@@ -49,8 +49,8 @@ export async function POST(request: NextRequest) {
       sizeMB: (file.size / (1024 * 1024)).toFixed(2),
     })
 
-    // ファイルサイズチェック（4MB制限 - Vercel無料プランの実際の制限）
-    const MAX_SIZE = 4 * 1024 * 1024 // 4MB
+    // ファイルサイズチェック（25MB制限）
+    const MAX_SIZE = 25 * 1024 * 1024 // 25MB
     if (file.size > MAX_SIZE) {
       console.error("=== CRITICAL: FILE SIZE EXCEEDED ===", {
         fileSize: file.size,
