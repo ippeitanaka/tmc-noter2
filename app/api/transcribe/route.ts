@@ -17,16 +17,18 @@ interface TranscriptionOptions {
 export async function POST(request: NextRequest) {
   try {
     console.log("=== TRANSCRIBE API START ===")
+    console.log("Request headers:", Object.fromEntries(request.headers.entries()))
 
     // リクエストサイズの事前チェック
     const contentLength = request.headers.get('content-length')
     if (contentLength) {
       const size = parseInt(contentLength)
-      const MAX_REQUEST_SIZE = 30 * 1024 * 1024 // 30MB (FormData overhead を考慮)
+      const MAX_REQUEST_SIZE = 50 * 1024 * 1024 // 50MBに拡張（FormData overhead を考慮）
+      console.log(`Request size: ${(size / 1024 / 1024).toFixed(2)}MB, Max: ${MAX_REQUEST_SIZE / 1024 / 1024}MB`)
       if (size > MAX_REQUEST_SIZE) {
         console.error("Request size too large:", size)
         return NextResponse.json(
-          { error: "ファイルサイズが大きすぎます。25MB以下のファイルを使用してください。" },
+          { error: "リクエストサイズが大きすぎます。50MB以下のファイルを使用してください。" },
           { status: 413 }
         )
       }
@@ -43,9 +45,20 @@ export async function POST(request: NextRequest) {
 
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
+      timeout: 120000, // 2分のタイムアウト
     })
 
-    const formData = await request.formData()
+    let formData;
+    try {
+      formData = await request.formData()
+    } catch (error) {
+      console.error("FormData parsing error:", error)
+      return NextResponse.json(
+        { error: "リクエストの解析に失敗しました。ファイルサイズを確認してください。" },
+        { status: 400 }
+      )
+    }
+
     const file = formData.get("file") as File
     
     // オプションの取得
@@ -73,10 +86,10 @@ export async function POST(request: NextRequest) {
       sizeMB: (file.size / (1024 * 1024)).toFixed(2),
     })
 
-    // ファイルサイズチェック（25MB制限）
-    const MAX_SIZE = 25 * 1024 * 1024 // 25MB
+    // ファイルサイズチェック（25MB制限を少し緩和）
+    const MAX_SIZE = 26 * 1024 * 1024 // 26MBに拡張
     if (file.size > MAX_SIZE) {
-      console.error("=== CRITICAL: FILE SIZE EXCEEDED ===", {
+      console.error("=== FILE SIZE EXCEEDED ===", {
         fileSize: file.size,
         maxSize: MAX_SIZE,
         sizeMB: (file.size / (1024 * 1024)).toFixed(2),
@@ -95,7 +108,22 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ファイル形式のチェック
+    const supportedTypes = [
+      'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/m4a', 
+      'audio/flac', 'audio/ogg', 'audio/webm', 'video/webm'
+    ]
+    
+    if (!supportedTypes.includes(file.type) && !file.name.match(/\.(mp3|wav|m4a|flac|ogg|webm)$/i)) {
+      console.error("Unsupported file type:", file.type, file.name)
+      return NextResponse.json(
+        { error: "サポートされていないファイル形式です。mp3, wav, m4a, flac, ogg, webm形式を使用してください。" },
+        { status: 400 }
+      )
+    }
+
     console.log("Calling OpenAI Whisper API...")
+    console.log("File size check passed:", (file.size / (1024 * 1024)).toFixed(2) + "MB")
 
     // 高精度文字起こし用のプロンプト
     const transcriptionPrompt = `
@@ -110,17 +138,55 @@ export async function POST(request: NextRequest) {
     `
 
     // OpenAI Whisper APIを呼び出し（タイムスタンプ付き）
-    const transcription = await openai.audio.transcriptions.create({
-      file: file,
-      model: options.model as "whisper-1",
-      language: options.language,
-      response_format: options.includeTimestamps ? "verbose_json" : "json",
-      prompt: transcriptionPrompt,
-      temperature: 0.2, // 一貫性を重視
-    })
+    let transcription;
+    try {
+      transcription = await openai.audio.transcriptions.create({
+        file: file,
+        model: options.model as "whisper-1",
+        language: options.language,
+        response_format: options.includeTimestamps ? "verbose_json" : "json",
+        prompt: transcriptionPrompt,
+        temperature: 0.2, // 一貫性を重視
+      })
+    } catch (apiError: any) {
+      console.error("OpenAI API Error:", apiError)
+      
+      // より詳細なエラーハンドリング
+      if (apiError.status === 413) {
+        return NextResponse.json(
+          { error: "ファイルサイズが大きすぎます。OpenAI APIの制限（25MB）を超えています。" },
+          { status: 413 }
+        )
+      }
+      
+      if (apiError.status === 400) {
+        return NextResponse.json(
+          { error: "ファイル形式が無効です。対応している音声ファイル形式を使用してください。" },
+          { status: 400 }
+        )
+      }
+      
+      if (apiError.status === 401) {
+        return NextResponse.json(
+          { error: "OpenAI API認証エラー。APIキーを確認してください。" },
+          { status: 401 }
+        )
+      }
+      
+      if (apiError.status === 429) {
+        return NextResponse.json(
+          { error: "OpenAI APIレート制限に達しました。しばらく待ってから再試行してください。" },
+          { status: 429 }
+        )
+      }
+      
+      // 一般的なAPIエラー
+      throw apiError
+    }
 
     console.log("Transcription completed:", {
       textLength: transcription.text?.length || 0,
+      hasText: !!transcription.text,
     })
 
     if (!transcription.text) {
@@ -142,52 +208,82 @@ export async function POST(request: NextRequest) {
 
     // 追加処理の実行
     if (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) {
-      const enhancedResult = await enhanceTranscription(transcription.text, options, openai)
-      result = { ...result, ...enhancedResult }
+      try {
+        console.log("Starting enhancement processing...")
+        const enhancedResult = await enhanceTranscription(transcription.text, options, openai)
+        result = { ...result, ...enhancedResult }
+        console.log("Enhancement completed successfully")
+      } catch (enhanceError) {
+        console.error("Enhancement error:", enhanceError)
+        result.enhancementError = "追加機能の処理中にエラーが発生しました"
+      }
     }
 
+    console.log("=== TRANSCRIBE API SUCCESS ===")
     return NextResponse.json(result)
   } catch (error: any) {
-    console.error("Transcription error:", error)
+    console.error("=== TRANSCRIBE API ERROR ===")
+    console.error("Error details:", {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      stack: error.stack
+    })
 
     // OpenAI APIエラーの詳細処理
-    if (error?.response?.status === 413) {
+    if (error?.status === 413 || error?.response?.status === 413) {
       return NextResponse.json(
         {
           error: "ファイルサイズが大きすぎます",
-          details: "OpenAI APIの制限を超えています。25MB以下のファイルを使用してください。",
+          details: "OpenAI APIの制限（25MB）を超えています。ファイルを圧縮してください。",
+          debug: { errorType: "size_limit", status: 413 }
         },
         { status: 413 },
       )
     }
 
-    if (error?.response?.status === 400) {
+    if (error?.status === 400 || error?.response?.status === 400) {
       return NextResponse.json(
         {
           error: "ファイル形式が無効です",
           details: "対応している音声ファイル形式を使用してください。",
+          debug: { errorType: "invalid_format", status: 400 }
         },
         { status: 400 },
       )
     }
 
-    if (error?.response?.status === 401) {
+    if (error?.status === 401 || error?.response?.status === 401) {
       return NextResponse.json(
         {
           error: "認証エラー",
           details: "OpenAI APIキーが無効です。",
+          debug: { errorType: "auth_error", status: 401 }
         },
         { status: 401 },
       )
     }
 
-    if (error?.response?.status === 429) {
+    if (error?.status === 429 || error?.response?.status === 429) {
       return NextResponse.json(
         {
           error: "レート制限",
           details: "API利用制限に達しました。しばらく待ってから再試行してください。",
+          debug: { errorType: "rate_limit", status: 429 }
         },
         { status: 429 },
+      )
+    }
+
+    // ネットワークエラー
+    if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+      return NextResponse.json(
+        {
+          error: "ネットワークエラー",
+          details: "接続がタイムアウトしました。ファイルサイズを小さくして再試行してください。",
+          debug: { errorType: "network_error", code: error.code }
+        },
+        { status: 408 },
       )
     }
 
@@ -196,6 +292,11 @@ export async function POST(request: NextRequest) {
       {
         error: "文字起こし処理中にエラーが発生しました",
         details: error.message || "不明なエラー",
+        debug: { 
+          errorType: "general_error",
+          message: error.message,
+          status: error.status || 500
+        }
       },
       { status: 500 },
     )

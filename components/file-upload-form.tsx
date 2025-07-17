@@ -14,9 +14,9 @@ import { EditableTranscript } from "./editable-transcript"
 import { useApiConfig } from "@/contexts/api-config-context"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
-const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25MB (アップロード制限を拡大)
-const MAX_INPUT_FILE_SIZE = 100 * 1024 * 1024 // 100MB (入力ファイル制限を拡大)
-const CHUNK_SIZE = 20 * 1024 * 1024 // 20MB chunks (分割サイズを拡大)
+const MAX_FILE_SIZE = 24 * 1024 * 1024 // 24MB (制限を少し下げて安全性を向上)
+const MAX_INPUT_FILE_SIZE = 100 * 1024 * 1024 // 100MB (入力ファイル制限を維持)
+const CHUNK_SIZE = 18 * 1024 * 1024 // 18MB chunks (分割サイズを小さく)
 const COMPRESSION_THRESHOLD = 10 * 1024 * 1024 // 10MB以上で圧縮を推奨
 
 interface TranscriptionOptions {
@@ -406,34 +406,72 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
 
   const uploadLargeFile = async (file: File) => {
     // 大きなファイルを分割して処理
-    const chunks = await splitAudioFile(file)
-    const transcripts: string[] = []
-    
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i]
-      const progress = ((i + 1) / chunks.length) * 100
-      setUploadProgress(progress)
+    try {
+      console.log("Starting large file upload processing...")
+      const chunks = await splitAudioFile(file)
+      const transcripts: string[] = []
+      
+      console.log(`Processing ${chunks.length} chunks...`)
+      
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]
+        const progress = ((i + 1) / chunks.length) * 100
+        setUploadProgress(progress)
 
-      try {
-        const transcript = await transcribeChunk(chunk, i)
-        transcripts.push(transcript)
-      } catch (error) {
-        console.error(`Error transcribing chunk ${i}:`, error)
-        setError(`チャンク ${i + 1} の処理中にエラーが発生しました。`)
-        setIsUploading(false)
-        return
+        try {
+          console.log(`Processing chunk ${i + 1}/${chunks.length}...`)
+          const transcript = await transcribeChunk(chunk, i)
+          transcripts.push(transcript)
+          console.log(`Chunk ${i + 1} completed successfully`)
+          
+          // 短い間隔で休憩してAPIレート制限を回避
+          if (i < chunks.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
+        } catch (error) {
+          console.error(`Error transcribing chunk ${i + 1}:`, error)
+          
+          // 個別のチャンクエラーでも処理を続行
+          let errorMessage = `チャンク ${i + 1} の処理中にエラーが発生しました。`
+          if (error instanceof Error) {
+            errorMessage += ` (${error.message})`
+          }
+          
+          // エラーチャンクは空文字列として処理を続行
+          transcripts.push("")
+          console.log(`Skipping chunk ${i + 1} due to error, continuing with next chunk...`)
+        }
       }
-    }
 
-    // 全てのチャンクの結果を結合
-    const finalTranscript = transcripts.join(' ')
-    const finalResult: TranscriptionResult = {
-      transcript: finalTranscript,
-      success: true
+      // 全てのチャンクの結果を結合（空文字列を除く）
+      const validTranscripts = transcripts.filter(t => t.trim().length > 0)
+      
+      if (validTranscripts.length === 0) {
+        throw new Error("すべてのチャンクの処理に失敗しました。ファイルを小さくして再試行してください。")
+      }
+      
+      const finalTranscript = validTranscripts.join(' ')
+      console.log(`Large file processing completed. Final transcript length: ${finalTranscript.length}`)
+      
+      const finalResult: TranscriptionResult = {
+        transcript: finalTranscript,
+        success: true
+      }
+      
+      // 成功したチャンクが一部のみの場合は警告を表示
+      if (validTranscripts.length < chunks.length) {
+        const skippedChunks = chunks.length - validTranscripts.length
+        setError(`${skippedChunks}個のチャンクでエラーが発生しましたが、残りの処理は完了しました。`)
+      }
+      
+      setTranscriptionResult(finalResult)
+      onTranscriptionComplete?.(finalResult)
+      setIsUploading(false)
+    } catch (error) {
+      console.error("Large file upload error:", error)
+      setError(error instanceof Error ? error.message : "大きなファイルの処理中にエラーが発生しました。")
+      setIsUploading(false)
     }
-    setTranscriptionResult(finalResult)
-    onTranscriptionComplete?.(finalResult)
-    setIsUploading(false)
   }
 
   const splitAudioFile = async (file: File): Promise<Blob[]> => {
@@ -504,7 +542,9 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   // バイナリレベルでの音声分割（メモリ効率的）
   const splitAudioBySize = async (file: File, chunkDurationSeconds: number): Promise<Blob[]> => {
     const chunks: Blob[] = []
-    const chunkSize = 3 * 1024 * 1024 // 3MBずつ分割
+    const chunkSize = 2.5 * 1024 * 1024 // 2.5MBずつ分割（より小さく）
+    
+    console.log(`Binary split: splitting ${(file.size / 1024 / 1024).toFixed(2)}MB file into ${(chunkSize / 1024 / 1024).toFixed(1)}MB chunks`)
     
     for (let offset = 0; offset < file.size; offset += chunkSize) {
       const end = Math.min(offset + chunkSize, file.size)
@@ -617,7 +657,27 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
 
   const transcribeChunk = async (chunk: Blob, index: number): Promise<string> => {
     const formData = new FormData()
-    formData.append("file", chunk, `chunk_${index}.wav`)
+    formData.append("file", chunk, `chunk_${index}.webm`)
+    
+    // API設定を追加
+    formData.append("provider", apiConfig.provider)
+    if (apiConfig.apiKey) {
+      formData.append("apiKey", apiConfig.apiKey)
+    }
+    if (apiConfig.region) {
+      formData.append("region", apiConfig.region)
+    }
+    
+    // 高度な設定を追加
+    formData.append("speakerDiarization", "false") // チャンクでは無効
+    formData.append("generateSummary", "false") // チャンクでは無効
+    formData.append("extractKeywords", "false") // チャンクでは無効
+    formData.append("includeTimestamps", "false") // チャンクでは無効
+    formData.append("sentimentAnalysis", "false") // チャンクでは無効
+    formData.append("language", options.language)
+    formData.append("model", options.model)
+
+    console.log(`Transcribing chunk ${index + 1}, size: ${(chunk.size / 1024 / 1024).toFixed(2)}MB`)
 
     const response = await fetch("/api/transcribe", {
       method: "POST",
@@ -625,10 +685,22 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      const errorText = await response.text()
+      let errorMessage = `HTTP error! status: ${response.status}`
+      
+      try {
+        const errorData = JSON.parse(errorText)
+        errorMessage = errorData.error || errorMessage
+      } catch (e) {
+        // JSON解析に失敗した場合は元のエラーメッセージを使用
+      }
+      
+      console.error(`Chunk ${index + 1} error:`, errorMessage)
+      throw new Error(errorMessage)
     }
 
     const result = await response.json()
+    console.log(`Chunk ${index + 1} completed, transcript length: ${result.transcript?.length || 0}`)
     return result.transcript || ""
   }
 
@@ -759,7 +831,31 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
         {error && (
           <Alert>
             <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>
+              <div className="space-y-2">
+                <div>{error}</div>
+                {error.includes("チャンク") && (
+                  <div className="text-sm text-gray-600">
+                    大きなファイルを分割して処理中にエラーが発生しました。
+                    <br />
+                    • ファイルサイズを小さくして再試行してください
+                    <br />
+                    • 音声編集ソフトで圧縮してください
+                    <br />
+                    • 複数の小さなファイルに分割して個別に処理してください
+                  </div>
+                )}
+                {error.includes("ネットワーク") && (
+                  <div className="text-sm text-gray-600">
+                    ネットワーク接続を確認してください。
+                    <br />
+                    • Wi-Fi/モバイル回線の安定性を確認
+                    <br />
+                    • ファイルサイズを小さくして再試行
+                  </div>
+                )}
+              </div>
+            </AlertDescription>
           </Alert>
         )}
 
