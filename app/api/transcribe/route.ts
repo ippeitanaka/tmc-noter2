@@ -3,6 +3,17 @@ import OpenAI from "openai"
 
 export const maxDuration = 300 // 5分に拡張（大きなファイル処理のため）
 
+// 文字起こし設定のインターフェース
+interface TranscriptionOptions {
+  speakerDiarization?: boolean
+  generateSummary?: boolean
+  extractKeywords?: boolean
+  includeTimestamps?: boolean
+  sentimentAnalysis?: boolean
+  language?: string
+  model?: string
+}
+
 export async function POST(request: NextRequest) {
   try {
     console.log("=== TRANSCRIBE API START ===")
@@ -36,6 +47,19 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData()
     const file = formData.get("file") as File
+    
+    // オプションの取得
+    const options: TranscriptionOptions = {
+      speakerDiarization: formData.get("speakerDiarization") === "true",
+      generateSummary: formData.get("generateSummary") === "true",
+      extractKeywords: formData.get("extractKeywords") === "true",
+      includeTimestamps: formData.get("includeTimestamps") === "true",
+      sentimentAnalysis: formData.get("sentimentAnalysis") === "true",
+      language: (formData.get("language") as string) || "ja",
+      model: (formData.get("model") as string) || "whisper-1"
+    }
+
+    console.log("Transcription options:", options)
 
     if (!file) {
       console.error("No file provided")
@@ -73,12 +97,26 @@ export async function POST(request: NextRequest) {
 
     console.log("Calling OpenAI Whisper API...")
 
-    // OpenAI Whisper APIを呼び出し
+    // 高精度文字起こし用のプロンプト
+    const transcriptionPrompt = `
+    これは日本語の音声ファイルの文字起こしです。以下の点に注意して、正確で自然な文字起こしを行ってください：
+
+    1. 話し言葉の自然な流れを保ちつつ、読みやすさを重視
+    2. 「えー」「あのー」などの言いよどみは適度に整理
+    3. 専門用語や固有名詞は正確に表記
+    4. 会話の場合は話者の切り替わりを明確に
+    5. 重要な情報は見落とさないよう注意
+    6. 文章の区切りと段落を適切に
+    `
+
+    // OpenAI Whisper APIを呼び出し（タイムスタンプ付き）
     const transcription = await openai.audio.transcriptions.create({
       file: file,
-      model: "whisper-1",
-      language: "ja",
-      response_format: "json",
+      model: options.model as "whisper-1",
+      language: options.language,
+      response_format: options.includeTimestamps ? "verbose_json" : "json",
+      prompt: transcriptionPrompt,
+      temperature: 0.2, // 一貫性を重視
     })
 
     console.log("Transcription completed:", {
@@ -89,10 +127,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "文字起こし結果が空です" }, { status: 400 })
     }
 
-    return NextResponse.json({
+    let result: any = {
       transcript: transcription.text,
       success: true,
-    })
+    }
+
+    // タイムスタンプ情報の追加
+    if (options.includeTimestamps && 'segments' in transcription) {
+      result.segments = transcription.segments
+      if ('duration' in transcription) {
+        result.duration = transcription.duration
+      }
+    }
+
+    // 追加処理の実行
+    if (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) {
+      const enhancedResult = await enhanceTranscription(transcription.text, options, openai)
+      result = { ...result, ...enhancedResult }
+    }
+
+    return NextResponse.json(result)
   } catch (error: any) {
     console.error("Transcription error:", error)
 
@@ -146,4 +200,162 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     )
   }
+}
+
+// 文字起こし結果の拡張処理
+async function enhanceTranscription(transcript: string, options: TranscriptionOptions, openai: OpenAI) {
+  const enhancements: any = {}
+
+  try {
+    // 話者識別の実行
+    if (options.speakerDiarization) {
+      enhancements.speakers = await identifySpeakers(transcript, openai)
+    }
+
+    // 要約の生成
+    if (options.generateSummary) {
+      enhancements.summary = await generateSummary(transcript, openai)
+    }
+
+    // キーワード抽出
+    if (options.extractKeywords) {
+      enhancements.keywords = await extractKeywords(transcript, openai)
+    }
+
+    // 感情分析
+    if (options.sentimentAnalysis) {
+      enhancements.sentiment = await analyzeSentiment(transcript, openai)
+    }
+
+    // 段落分割と構造化
+    enhancements.structured = await structureTranscript(transcript, openai)
+
+  } catch (error) {
+    console.error("Enhancement error:", error)
+    enhancements.enhancementError = "追加機能の処理中にエラーが発生しました"
+  }
+
+  return enhancements
+}
+
+// 話者識別
+async function identifySpeakers(transcript: string, openai: OpenAI) {
+  const prompt = `
+  以下の文字起こしテキストを分析し、話者を識別してください。
+  各話者を「話者A」「話者B」のように区別し、発言内容を整理してください。
+
+  テキスト：
+  ${transcript}
+
+  出力形式：
+  - 話者の数
+  - 各話者の発言内容（時系列順）
+  - 話者の特徴（可能であれば）
+  `
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+  })
+
+  return response.choices[0].message.content
+}
+
+// 要約の生成
+async function generateSummary(transcript: string, openai: OpenAI) {
+  const prompt = `
+  以下の文字起こしテキストの要約を作成してください。
+  
+  要約には以下を含めてください：
+  1. 全体の概要（2-3文）
+  2. 主要なポイント（3-5つ）
+  3. 重要な決定事項や結論
+  4. 今後のアクションアイテム（あれば）
+
+  テキスト：
+  ${transcript}
+  `
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+  })
+
+  return response.choices[0].message.content
+}
+
+// キーワード抽出
+async function extractKeywords(transcript: string, openai: OpenAI) {
+  const prompt = `
+  以下の文字起こしテキストから重要なキーワードを抽出してください。
+  
+  以下のカテゴリに分けて抽出してください：
+  1. 人名・組織名
+  2. 専門用語・技術用語
+  3. 重要な概念・トピック
+  4. 数値・データ
+  5. 日付・時間
+
+  テキスト：
+  ${transcript}
+  `
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+  })
+
+  return response.choices[0].message.content
+}
+
+// 感情分析
+async function analyzeSentiment(transcript: string, openai: OpenAI) {
+  const prompt = `
+  以下の文字起こしテキストの感情分析を行ってください。
+  
+  分析項目：
+  1. 全体的な感情的トーン（ポジティブ/ネガティブ/中立）
+  2. 話者の感情変化（あれば）
+  3. 重要な感情表現
+  4. 議論の雰囲気（建設的/対立的/協調的など）
+
+  テキスト：
+  ${transcript}
+  `
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+  })
+
+  return response.choices[0].message.content
+}
+
+// 文章構造化
+async function structureTranscript(transcript: string, openai: OpenAI) {
+  const prompt = `
+  以下の文字起こしテキストを読みやすく構造化してください。
+  
+  構造化の方針：
+  1. 適切な段落分割
+  2. 文章の整理（冗長な部分の削除）
+  3. 話題の区切りを明確に
+  4. 見出しの追加（必要に応じて）
+  5. 読みやすい文体に調整
+
+  テキスト：
+  ${transcript}
+  `
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+  })
+
+  return response.choices[0].message.content
 }

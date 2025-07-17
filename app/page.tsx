@@ -29,8 +29,12 @@ export default function Home() {
   // 現在のアクティブな文字起こしを取得
   const currentTranscript = recordingTranscript || uploadTranscript
 
-  const handleTranscriptionComplete = (transcriptText: string) => {
-    setUploadTranscript(transcriptText)
+  const handleTranscriptionComplete = (result: any) => {
+    if (typeof result === 'string') {
+      setUploadTranscript(result)
+    } else {
+      setUploadTranscript(result.transcript)
+    }
   }
 
   const handleAudioProcessed = (buffer: AudioBuffer) => {

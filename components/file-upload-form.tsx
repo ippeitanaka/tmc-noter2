@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Upload, FileAudio, X, CheckCircle, AlertTriangle } from "lucide-react"
+import { Upload, FileAudio, X, CheckCircle, AlertTriangle, Settings } from "lucide-react"
 import { processAudioFile } from "@/lib/ffmpeg-helper"
 import { EditableTranscript } from "./editable-transcript"
 
@@ -17,8 +17,30 @@ const MAX_INPUT_FILE_SIZE = 100 * 1024 * 1024 // 100MB (入力ファイル制限
 const CHUNK_SIZE = 20 * 1024 * 1024 // 20MB chunks (分割サイズを拡大)
 const COMPRESSION_THRESHOLD = 10 * 1024 * 1024 // 10MB以上で圧縮を推奨
 
+interface TranscriptionOptions {
+  speakerDiarization: boolean
+  generateSummary: boolean
+  extractKeywords: boolean
+  includeTimestamps: boolean
+  sentimentAnalysis: boolean
+  language: string
+  model: string
+}
+
+interface TranscriptionResult {
+  transcript: string
+  speakers?: string
+  summary?: string
+  keywords?: string
+  sentiment?: string
+  structured?: string
+  segments?: any[]
+  duration?: number
+  success: boolean
+}
+
 interface FileUploadFormProps {
-  onTranscriptionComplete?: (transcript: string) => void
+  onTranscriptionComplete?: (result: TranscriptionResult) => void
   onAudioProcessed?: (buffer: AudioBuffer) => void
 }
 
@@ -28,10 +50,22 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   const [isUploading, setIsUploading] = useState(false)
   const [isCompressing, setIsCompressing] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [transcript, setTranscript] = useState("")
+  const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [compressionInfo, setCompressionInfo] = useState<string | null>(null)
+  
+  // 新しい高度な設定
+  const [options, setOptions] = useState<TranscriptionOptions>({
+    speakerDiarization: false,
+    generateSummary: true,
+    extractKeywords: true,
+    includeTimestamps: false,
+    sentimentAnalysis: false,
+    language: "ja",
+    model: "whisper-1"
+  })
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -58,7 +92,7 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
 
     setOriginalFile(selectedFile)
     setError(null)
-    setTranscript("")
+    setTranscriptionResult(null)
     setUploadProgress(0)
     setCompressionInfo(null)
 
@@ -173,6 +207,15 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   const uploadSingleFile = async (file: File) => {
     const formData = new FormData()
     formData.append("file", file)
+    
+    // 高度な設定を追加
+    formData.append("speakerDiarization", options.speakerDiarization.toString())
+    formData.append("generateSummary", options.generateSummary.toString())
+    formData.append("extractKeywords", options.extractKeywords.toString())
+    formData.append("includeTimestamps", options.includeTimestamps.toString())
+    formData.append("sentimentAnalysis", options.sentimentAnalysis.toString())
+    formData.append("language", options.language)
+    formData.append("model", options.model)
 
     const xhr = new XMLHttpRequest()
 
@@ -187,8 +230,8 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
       if (xhr.status === 200) {
         const response = JSON.parse(xhr.responseText)
         if (response.transcript) {
-          setTranscript(response.transcript)
-          onTranscriptionComplete?.(response.transcript)
+          setTranscriptionResult(response)
+          onTranscriptionComplete?.(response)
         } else {
           setError("文字起こしに失敗しました。")
         }
@@ -237,8 +280,12 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
 
     // 全てのチャンクの結果を結合
     const finalTranscript = transcripts.join(' ')
-    setTranscript(finalTranscript)
-    onTranscriptionComplete?.(finalTranscript)
+    const finalResult: TranscriptionResult = {
+      transcript: finalTranscript,
+      success: true
+    }
+    setTranscriptionResult(finalResult)
+    onTranscriptionComplete?.(finalResult)
     setIsUploading(false)
   }
 
@@ -349,7 +396,7 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   const removeFile = () => {
     setFile(null)
     setOriginalFile(null)
-    setTranscript("")
+    setTranscriptionResult(null)
     setError(null)
     setUploadProgress(0)
     setCompressionInfo(null)
@@ -473,17 +520,193 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
           </Alert>
         )}
 
+        {/* 高度な設定 */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-medium">文字起こし設定</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+            >
+              {showAdvancedSettings ? "設定を非表示" : "詳細設定"}
+            </Button>
+          </div>
+
+          {showAdvancedSettings && (
+            <div className="p-4 border rounded-lg bg-gray-50 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={options.speakerDiarization}
+                      onChange={(e) => setOptions({...options, speakerDiarization: e.target.checked})}
+                      className="rounded"
+                    />
+                    <span className="text-sm">話者識別</span>
+                  </label>
+                  <p className="text-xs text-gray-600">複数の話者を自動的に識別</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={options.generateSummary}
+                      onChange={(e) => setOptions({...options, generateSummary: e.target.checked})}
+                      className="rounded"
+                    />
+                    <span className="text-sm">要約生成</span>
+                  </label>
+                  <p className="text-xs text-gray-600">自動的に要約を生成</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={options.extractKeywords}
+                      onChange={(e) => setOptions({...options, extractKeywords: e.target.checked})}
+                      className="rounded"
+                    />
+                    <span className="text-sm">キーワード抽出</span>
+                  </label>
+                  <p className="text-xs text-gray-600">重要なキーワードを抽出</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={options.includeTimestamps}
+                      onChange={(e) => setOptions({...options, includeTimestamps: e.target.checked})}
+                      className="rounded"
+                    />
+                    <span className="text-sm">タイムスタンプ</span>
+                  </label>
+                  <p className="text-xs text-gray-600">時間情報を含める</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={options.sentimentAnalysis}
+                      onChange={(e) => setOptions({...options, sentimentAnalysis: e.target.checked})}
+                      className="rounded"
+                    />
+                    <span className="text-sm">感情分析</span>
+                  </label>
+                  <p className="text-xs text-gray-600">感情やトーンを分析</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">言語</label>
+                  <select
+                    value={options.language}
+                    onChange={(e) => setOptions({...options, language: e.target.value})}
+                    className="w-full p-2 border rounded"
+                  >
+                    <option value="ja">日本語</option>
+                    <option value="en">英語</option>
+                    <option value="zh">中国語</option>
+                    <option value="ko">韓国語</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* 文字起こし結果 */}
-        {transcript && (
+        {transcriptionResult && (
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <CheckCircle className="h-4 w-4 text-green-500" />
               <span className="text-sm font-medium text-green-700">文字起こし完了</span>
             </div>
-            <EditableTranscript
-              initialText={transcript}
-              onSave={setTranscript}
-            />
+            
+            {/* 基本文字起こし */}
+            <div className="space-y-2">
+              <h3 className="font-medium">文字起こし結果</h3>
+              <EditableTranscript
+                initialText={transcriptionResult.transcript}
+                onSave={(text: string) => {
+                  setTranscriptionResult({
+                    ...transcriptionResult,
+                    transcript: text
+                  })
+                }}
+              />
+            </div>
+            
+            {/* 構造化された文字起こし */}
+            {transcriptionResult.structured && (
+              <div className="space-y-2">
+                <h3 className="font-medium">構造化された文字起こし</h3>
+                <div className="p-4 border rounded-lg bg-gray-50">
+                  <pre className="whitespace-pre-wrap text-sm">{transcriptionResult.structured}</pre>
+                </div>
+              </div>
+            )}
+            
+            {/* 話者識別結果 */}
+            {transcriptionResult.speakers && (
+              <div className="space-y-2">
+                <h3 className="font-medium">話者識別</h3>
+                <div className="p-4 border rounded-lg bg-blue-50">
+                  <pre className="whitespace-pre-wrap text-sm">{transcriptionResult.speakers}</pre>
+                </div>
+              </div>
+            )}
+            
+            {/* 要約 */}
+            {transcriptionResult.summary && (
+              <div className="space-y-2">
+                <h3 className="font-medium">要約</h3>
+                <div className="p-4 border rounded-lg bg-green-50">
+                  <pre className="whitespace-pre-wrap text-sm">{transcriptionResult.summary}</pre>
+                </div>
+              </div>
+            )}
+            
+            {/* キーワード */}
+            {transcriptionResult.keywords && (
+              <div className="space-y-2">
+                <h3 className="font-medium">キーワード</h3>
+                <div className="p-4 border rounded-lg bg-yellow-50">
+                  <pre className="whitespace-pre-wrap text-sm">{transcriptionResult.keywords}</pre>
+                </div>
+              </div>
+            )}
+            
+            {/* 感情分析 */}
+            {transcriptionResult.sentiment && (
+              <div className="space-y-2">
+                <h3 className="font-medium">感情分析</h3>
+                <div className="p-4 border rounded-lg bg-purple-50">
+                  <pre className="whitespace-pre-wrap text-sm">{transcriptionResult.sentiment}</pre>
+                </div>
+              </div>
+            )}
+            
+            {/* タイムスタンプ情報 */}
+            {transcriptionResult.segments && (
+              <div className="space-y-2">
+                <h3 className="font-medium">タイムスタンプ</h3>
+                <div className="max-h-60 overflow-y-auto p-4 border rounded-lg bg-gray-50">
+                  {transcriptionResult.segments.map((segment: any, index: number) => (
+                    <div key={index} className="flex items-start gap-2 mb-2">
+                      <span className="text-xs text-gray-500 min-w-[60px]">
+                        {Math.floor(segment.start / 60)}:{String(Math.floor(segment.start % 60)).padStart(2, '0')}
+                      </span>
+                      <span className="text-sm">{segment.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
