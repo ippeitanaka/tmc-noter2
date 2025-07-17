@@ -218,8 +218,8 @@ ${transcript}`
     const mainPoints = mainPointsText
       .replace(/主な発言[：:]/i, "")
       .split(/[\n・]/)
-      .map((point) => point.trim())
-      .filter((point) => point.length > 0)
+      .map((point: string) => point.trim())
+      .filter((point: string) => point.length > 0)
 
     // 決定事項を抽出
     const decisionsMatch = text.match(/決定事項[：:][\s\S]*?(?=TODO|$)/i)
