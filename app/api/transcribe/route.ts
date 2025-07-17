@@ -3,13 +3,22 @@ import OpenAI from "openai"
 
 export const maxDuration = 60
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
-
 export async function POST(request: NextRequest) {
   try {
     console.log("=== TRANSCRIBE API START ===")
+
+    // OpenAI API keyのチェック
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OPENAI_API_KEY environment variable is not set")
+      return NextResponse.json(
+        { error: "OpenAI API keyが設定されていません" }, 
+        { status: 500 }
+      )
+    }
+
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    })
 
     const formData = await request.formData()
     const file = formData.get("file") as File
