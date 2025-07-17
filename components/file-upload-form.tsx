@@ -64,6 +64,8 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
     if (selectedFile.size > MAX_FILE_SIZE) {
       setIsCompressing(true)
       try {
+        console.log(`Starting compression for ${selectedFile.name}, size: ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB`)
+        
         const { blob, type } = await processAudioFile(selectedFile, {
           compress: true,
           targetSizeMB: 3, // 3MB以下に圧縮
@@ -73,17 +75,39 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
           type: type,
         })
 
+        console.log(`Compression completed: ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`)
+
         // 圧縮後のサイズをチェック
         if (compressedFile.size > MAX_FILE_SIZE) {
-          setError(`ファイルサイズが大きすぎます。圧縮後も${(compressedFile.size / 1024 / 1024).toFixed(1)}MBです。より小さなファイルを使用してください。`)
-          setIsCompressing(false)
-          return
+          // 圧縮が十分でない場合は、より積極的な圧縮を試行
+          console.log("First compression not sufficient, trying more aggressive compression")
+          
+          const { blob: blob2, type: type2 } = await processAudioFile(selectedFile, {
+            compress: true,
+            targetSizeMB: 2, // 2MB以下に圧縮
+          })
+          
+          const compressedFile2 = new File([blob2], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
+            type: type2,
+          })
+          
+          if (compressedFile2.size > MAX_FILE_SIZE) {
+            setError(`ファイルサイズが大きすぎます。最大圧縮後も${(compressedFile2.size / 1024 / 1024).toFixed(1)}MBです。より小さなファイルを使用してください。`)
+            setIsCompressing(false)
+            return
+          }
+          
+          setFile(compressedFile2)
+          setCompressionInfo(
+            `自動圧縮完了: ${(selectedFile.size / 1024 / 1024).toFixed(1)}MB → ${(compressedFile2.size / 1024 / 1024).toFixed(1)}MB`
+          )
+        } else {
+          setFile(compressedFile)
+          setCompressionInfo(
+            `自動圧縮完了: ${(selectedFile.size / 1024 / 1024).toFixed(1)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(1)}MB`
+          )
         }
-
-        setFile(compressedFile)
-        setCompressionInfo(
-          `自動圧縮完了: ${(selectedFile.size / 1024 / 1024).toFixed(1)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(1)}MB`
-        )
+        
         setIsCompressing(false)
       } catch (error) {
         console.error("Compression error:", error)
