@@ -10,8 +10,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, FileAudio, X, CheckCircle, AlertTriangle } from "lucide-react"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
-const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB (より実用的なサイズに変更)
-const COMPRESSION_THRESHOLD = 10 * 1024 * 1024 // 10MB以上で圧縮を推奨
+const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4MB (Vercel無料プランの実際の制限)
+const CHUNK_SIZE = 4 * 1024 * 1024 // 4MB chunks (Vercel制限を考慮)
+const COMPRESSION_THRESHOLD = 3 * 1024 * 1024 // 3MB以上で圧縮を推奨
 
 interface FileUploadFormProps {
   onTranscriptionComplete?: (transcript: string) => void
@@ -35,7 +36,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      return `ファイルサイズが大きすぎます。最大20MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
+      return `ファイルサイズが大きすぎます。最大4MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
     }
 
     return null
@@ -111,7 +112,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
             setError("文字起こしに失敗しました。")
           }
         } else if (xhr.status === 413) {
-          setError("ファイルサイズが大きすぎます。20MB以下のファイルを使用してください。")
+          setError("ファイルサイズが大きすぎます。4MB以下のファイルを使用してください。")
         } else {
           try {
             const errorResponse = JSON.parse(xhr.responseText)
@@ -179,7 +180,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
             <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-lg font-medium text-gray-700 mb-2">ファイルをタップ</p>
             <p className="text-sm text-gray-500 mb-4">または、ドラッグ&ドロップ</p>
-            <p className="text-xs text-gray-400">対応形式: {SUPPORTED_FORMATS.join(", ").toUpperCase()} (最大20MB)</p>
+            <p className="text-xs text-gray-400">対応形式: {SUPPORTED_FORMATS.join(", ").toUpperCase()} (最大4MB)</p>
             <input
               ref={fileInputRef}
               type="file"
@@ -202,6 +203,11 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
                   {file.size > COMPRESSION_THRESHOLD && (
                     <p className="text-xs text-blue-600 mt-1">
                       💡 大きなファイルのため、自動圧縮して処理します
+                    </p>
+                  )}
+                  {file.size > MAX_FILE_SIZE && (
+                    <p className="text-xs text-red-600 mt-1">
+                      ⚠️ ファイルサイズが制限を超えています。音声編集ソフトで圧縮してください。
                     </p>
                   )}
                 </div>
@@ -269,6 +275,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
               <li>日本語の音声に最適化されています</li>
               <li>処理時間はファイルサイズによって異なります</li>
               <li>アップロードされたファイルは処理後に自動削除されます</li>
+              <li><strong>4MB以上のファイル:</strong> Audacity等で圧縮してください（64kbps MP3推奨）</li>
             </ul>
           </AlertDescription>
         </Alert>
