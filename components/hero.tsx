@@ -44,9 +44,9 @@ function Hero() {
               />
             </div>
             <p className="text-xl sm:text-2xl text-blue-100 max-w-3xl mx-auto leading-relaxed">
-              AI技術を活用した高精度な音声文字起こしと
+              設定不要で即座に使える音声文字起こしと
               <br className="hidden sm:block" />
-              自動議事録生成システム
+              AI技術による自動議事録生成システム
             </p>
           </div>
 
@@ -55,9 +55,9 @@ function Hero() {
             {[
               {
                 icon: <Mic className="h-6 w-6 text-white" />,
-                title: "高精度音声認識",
-                desc: "OpenAI Whisper APIによる正確な文字起こし",
-                color: "bg-blue-500",
+                title: "設定不要で即座に利用",
+                desc: "Web Speech APIでAPIキー不要・無料で音声認識",
+                color: "bg-green-500",
               },
               {
                 icon: <FileText className="h-6 w-6 text-white" />,
@@ -73,9 +73,9 @@ function Hero() {
               },
               {
                 icon: <Shield className="h-6 w-6 text-white" />,
-                title: "セキュア",
-                desc: "企業レベルのセキュリティで安心してご利用",
-                color: "bg-green-500",
+                title: "プライベート処理",
+                desc: "ブラウザ内処理で完全にプライベート",
+                color: "bg-blue-500",
               },
             ].map(({ icon, title, desc, color }) => (
               <Card
@@ -97,6 +97,7 @@ function Hero() {
           <div className="mt-12 p-6 bg-white/10 backdrop-blur-sm rounded-xl border border-white/20 animate-fade-in-up">
             <h3 className="text-lg font-semibold text-white mb-3">対応ファイル形式</h3>
             <p className="text-blue-100">MP3, WAV, M4A, FLAC, OGG, WEBM (最大50MB・自動圧縮)</p>
+            <p className="text-green-200 text-sm mt-2">💡 デフォルトで Web Speech API を使用 - 設定不要で即座に利用可能</p>
           </div>
         </div>
       </div>

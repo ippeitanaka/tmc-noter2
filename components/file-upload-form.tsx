@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Upload, FileAudio, X, CheckCircle, AlertTriangle, Settings } from "lucide-react"
 import { processAudioFile } from "@/lib/ffmpeg-helper"
 import { EditableTranscript } from "./editable-transcript"
+import { useApiConfig } from "@/contexts/api-config-context"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
 const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25MB (アップロード制限を拡大)
@@ -27,6 +29,12 @@ interface TranscriptionOptions {
   model: string
 }
 
+interface ApiConfig {
+  provider: 'openai' | 'assemblyai' | 'azure' | 'webspeech' | 'offline'
+  apiKey?: string
+  region?: string
+}
+
 interface TranscriptionResult {
   transcript: string
   speakers?: string
@@ -42,9 +50,11 @@ interface TranscriptionResult {
 interface FileUploadFormProps {
   onTranscriptionComplete?: (result: TranscriptionResult) => void
   onAudioProcessed?: (buffer: AudioBuffer) => void
+  onTranscriptionClear?: () => void
 }
 
-export default function FileUploadForm({ onTranscriptionComplete, onAudioProcessed }: FileUploadFormProps) {
+export default function FileUploadForm({ onTranscriptionComplete, onAudioProcessed, onTranscriptionClear }: FileUploadFormProps) {
+  const { apiConfig } = useApiConfig()
   const [file, setFile] = useState<File | null>(null)
   const [originalFile, setOriginalFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -100,61 +110,107 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     if (selectedFile.size > MAX_FILE_SIZE) {
       setIsCompressing(true)
       try {
-        console.log(`Starting compression for ${selectedFile.name}, size: ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB`)
+        const fileSizeMB = selectedFile.size / (1024 * 1024)
+        console.log(`Starting compression for ${selectedFile.name}, size: ${fileSizeMB.toFixed(2)}MB`)
         
-        const { blob, type } = await processAudioFile(selectedFile, {
-          compress: true,
-          targetSizeMB: 20, // 20MB以下に圧縮
-        })
-
-        const compressedFile = new File([blob], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
-          type: type,
-        })
-
-        console.log(`Compression completed: ${(selectedFile.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`)
-
-        // 圧縮後のサイズをチェック
-        if (compressedFile.size > MAX_FILE_SIZE) {
-          // 圧縮が十分でない場合は、より積極的な圧縮を試行
-          console.log("First compression not sufficient, trying more aggressive compression")
-          
-          const { blob: blob2, type: type2 } = await processAudioFile(selectedFile, {
-            compress: true,
-            targetSizeMB: 15, // 15MB以下に圧縮
-          })
-          
-          const compressedFile2 = new File([blob2], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
-            type: type2,
-          })
-          
-          if (compressedFile2.size > MAX_FILE_SIZE) {
-            setError(`ファイルサイズが大きすぎます。最大圧縮後も${(compressedFile2.size / 1024 / 1024).toFixed(1)}MBです。より小さなファイルを使用してください。`)
-            setIsCompressing(false)
-            return
+        // 段階的な圧縮処理
+        let compressedFile = selectedFile
+        
+        // 1. 最初に16kHz、16bit圧縮を試行
+        if (fileSizeMB > 5) {
+          const compressed = await compressAudioFile(selectedFile, 16000, 16)
+          if (compressed.size <= MAX_FILE_SIZE) {
+            compressedFile = new File([compressed], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
+              type: "audio/wav",
+            })
           }
-          
-          setFile(compressedFile2)
-          setCompressionInfo(
-            `自動圧縮完了: ${(selectedFile.size / 1024 / 1024).toFixed(1)}MB → ${(compressedFile2.size / 1024 / 1024).toFixed(1)}MB`
-          )
-        } else {
+        }
+        
+        // 2. まだ大きすぎる場合、12kHz、8bit圧縮を試行
+        if (compressedFile.size > MAX_FILE_SIZE && fileSizeMB > 10) {
+          const compressed = await compressAudioFile(selectedFile, 12000, 8)
+          if (compressed.size <= MAX_FILE_SIZE) {
+            compressedFile = new File([compressed], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
+              type: "audio/wav",
+            })
+          }
+        }
+        
+        // 3. まだ大きすぎる場合、8kHz、8bit圧縮を試行
+        if (compressedFile.size > MAX_FILE_SIZE) {
+          const compressed = await compressAudioFile(selectedFile, 8000, 8)
+          if (compressed.size <= MAX_FILE_SIZE) {
+            compressedFile = new File([compressed], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
+              type: "audio/wav",
+            })
+          }
+        }
+        
+        // 圧縮結果の確認
+        if (compressedFile.size <= MAX_FILE_SIZE && compressedFile !== selectedFile) {
           setFile(compressedFile)
           setCompressionInfo(
-            `自動圧縮完了: ${(selectedFile.size / 1024 / 1024).toFixed(1)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(1)}MB`
+            `圧縮完了: ${fileSizeMB.toFixed(1)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(1)}MB`
+          )
+        } else {
+          // 圧縮に失敗した場合、元のファイルを保持して分割処理
+          setFile(selectedFile)
+          setCompressionInfo(
+            `大きなファイルは自動的に分割して処理されます: ${fileSizeMB.toFixed(1)}MB`
           )
         }
         
         setIsCompressing(false)
       } catch (error) {
         console.error("Compression error:", error)
-        setError("ファイル圧縮中にエラーが発生しました。より小さなファイルを使用してください。")
+        
+        // 圧縮に失敗した場合は元のファイルを保持してチャンク処理
+        const fileSizeMB = selectedFile.size / (1024 * 1024)
+        setFile(selectedFile)
+        setCompressionInfo(
+          `圧縮に失敗しました。大きなファイルは自動的に分割して処理されます: ${fileSizeMB.toFixed(1)}MB`
+        )
         setIsCompressing(false)
-        return
       }
     } else {
       setFile(selectedFile)
     }
   }, [])
+
+  const compressAudioFile = async (file: File, targetSampleRate: number, bitsPerSample: number): Promise<Blob> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const arrayBuffer = await file.arrayBuffer()
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+        
+        console.log(`Compressing: ${(file.size / 1024 / 1024).toFixed(2)}MB -> target ${targetSampleRate}Hz, ${bitsPerSample}bit`)
+        
+        // リサンプリング用のオフラインコンテキスト（モノラル）
+        const offlineContext = new OfflineAudioContext(
+          1, // モノラル
+          Math.ceil(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate),
+          targetSampleRate
+        )
+        
+        const source = offlineContext.createBufferSource()
+        source.buffer = audioBuffer
+        source.connect(offlineContext.destination)
+        source.start()
+        
+        const resampledBuffer = await offlineContext.startRendering()
+        const compressed = await audioBufferToCompressedWav(resampledBuffer, bitsPerSample)
+        
+        await audioContext.close()
+        
+        console.log(`Compression result: ${(compressed.size / 1024 / 1024).toFixed(2)}MB`)
+        resolve(compressed)
+      } catch (error) {
+        console.error("Compression failed:", error)
+        reject(error)
+      }
+    })
+  }
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
@@ -208,6 +264,15 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     const formData = new FormData()
     formData.append("file", file)
     
+    // API設定を追加
+    formData.append("provider", apiConfig.provider)
+    if (apiConfig.apiKey) {
+      formData.append("apiKey", apiConfig.apiKey)
+    }
+    if (apiConfig.region) {
+      formData.append("region", apiConfig.region)
+    }
+    
     // 高度な設定を追加
     formData.append("speakerDiarization", options.speakerDiarization.toString())
     formData.append("generateSummary", options.generateSummary.toString())
@@ -216,6 +281,12 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     formData.append("sentimentAnalysis", options.sentimentAnalysis.toString())
     formData.append("language", options.language)
     formData.append("model", options.model)
+
+    // Web Speech APIの場合はクライアントサイドで処理
+    if (apiConfig.provider === 'webspeech') {
+      await handleWebSpeechTranscription(file)
+      return
+    }
 
     const xhr = new XMLHttpRequest()
 
@@ -253,8 +324,84 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
       setIsUploading(false)
     }
 
-    xhr.open("POST", "/api/transcribe")
+    xhr.open("POST", "/api/transcribe-multi")
     xhr.send(formData)
+  }
+
+  // Web Speech APIを使用した文字起こし
+  const handleWebSpeechTranscription = async (file: File) => {
+    try {
+      // Web Speech APIのサポートをチェック
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (!SpeechRecognition) {
+        throw new Error('このブラウザはWeb Speech APIをサポートしていません。ChromeまたはEdgeをご使用ください。')
+      }
+
+      const recognition = new SpeechRecognition()
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = options.language === 'ja' ? 'ja-JP' : 'en-US'
+      recognition.maxAlternatives = 3
+
+      let fullTranscript = ''
+      let isRecognitionActive = false
+
+      const audio = new Audio(URL.createObjectURL(file))
+
+      recognition.onresult = (event: any) => {
+        const result = event.results[event.results.length - 1]
+        if (result.isFinal) {
+          fullTranscript += result[0].transcript + ' '
+          setUploadProgress(Math.min((audio.currentTime / audio.duration) * 100, 100))
+        }
+      }
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error)
+        setError(`音声認識エラー: ${event.error}`)
+        setIsUploading(false)
+      }
+
+      recognition.onend = () => {
+        isRecognitionActive = false
+        if (fullTranscript.trim()) {
+          const result: TranscriptionResult = {
+            transcript: fullTranscript.trim(),
+            success: true
+          }
+          setTranscriptionResult(result)
+          onTranscriptionComplete?.(result)
+        } else {
+          setError('音声を認識できませんでした。音声が明瞭で雑音が少ないファイルを使用してください。')
+        }
+        setIsUploading(false)
+      }
+
+      // 音声再生開始
+      audio.onloadedmetadata = () => {
+        recognition.start()
+        isRecognitionActive = true
+        audio.play()
+      }
+
+      audio.onended = () => {
+        setTimeout(() => {
+          if (isRecognitionActive) {
+            recognition.stop()
+          }
+        }, 1000) // 1秒待ってから認識を停止
+      }
+
+      audio.onerror = () => {
+        setError('音声ファイルの再生に失敗しました。')
+        setIsUploading(false)
+      }
+
+    } catch (error) {
+      console.error('Web Speech transcription error:', error)
+      setError(error instanceof Error ? error.message : '音声認識に失敗しました。')
+      setIsUploading(false)
+    }
   }
 
   const uploadLargeFile = async (file: File) => {
@@ -290,11 +437,25 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   }
 
   const splitAudioFile = async (file: File): Promise<Blob[]> => {
-    // 音声ファイルを時間で分割（5分ごと）
+    // より効率的な音声ファイル分割（3分ごと）
     const chunks: Blob[] = []
-    const chunkDuration = 300 // 5分 = 300秒
+    const chunkDuration = 180 // 3分 = 180秒（より小さなチャンク）
     
     try {
+      const fileSizeMB = file.size / (1024 * 1024)
+      console.log(`Splitting large file: ${fileSizeMB.toFixed(2)}MB`)
+
+      // 大きなファイルの場合、より短い間隔で分割
+      if (fileSizeMB > 50) {
+        // 50MB以上の場合は2分間隔
+        const chunkDurationAdjusted = 120 // 2分
+        return await splitAudioBySize(file, chunkDurationAdjusted)
+      } else if (fileSizeMB > 20) {
+        // 20MB以上の場合は2.5分間隔
+        const chunkDurationAdjusted = 150 // 2.5分
+        return await splitAudioBySize(file, chunkDurationAdjusted)
+      }
+
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
       const arrayBuffer = await file.arrayBuffer()
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
@@ -303,34 +464,112 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
       const chunkSamples = chunkDuration * sampleRate
       const totalChunks = Math.ceil(audioBuffer.length / chunkSamples)
       
+      console.log(`Creating ${totalChunks} chunks of ${chunkDuration}s each`)
+
       for (let i = 0; i < totalChunks; i++) {
         const start = i * chunkSamples
         const end = Math.min(start + chunkSamples, audioBuffer.length)
         
         const chunkBuffer = audioContext.createBuffer(
-          audioBuffer.numberOfChannels,
+          1, // 常にモノラル
           end - start,
-          sampleRate
+          Math.min(sampleRate, 16000) // 16kHzに制限
         )
         
-        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-          const channelData = audioBuffer.getChannelData(channel)
-          const chunkData = chunkBuffer.getChannelData(channel)
-          for (let j = 0; j < end - start; j++) {
-            chunkData[j] = channelData[start + j]
+        // モノラルに変換して音声データをコピー
+        const chunkData = chunkBuffer.getChannelData(0)
+        for (let j = 0; j < end - start; j++) {
+          let sample = 0
+          for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+            sample += audioBuffer.getChannelData(channel)[start + j]
           }
+          chunkData[j] = sample / audioBuffer.numberOfChannels
         }
         
-        // AudioBufferをWAVファイルに変換
-        const wavBlob = await audioBufferToWav(chunkBuffer)
+        // AudioBufferをWAVファイルに変換（8bit圧縮）
+        const wavBlob = await audioBufferToCompressedWav(chunkBuffer, 8)
         chunks.push(wavBlob)
       }
       
+      await audioContext.close()
+      console.log(`Split complete: ${chunks.length} chunks created`)
       return chunks
     } catch (error) {
       console.error("Error splitting audio file:", error)
-      throw new Error("音声ファイルの分割に失敗しました。")
+      // フォールバック: バイナリレベルでの分割
+      return await splitAudioBySize(file, 60) // 1分間隔
     }
+  }
+
+  // バイナリレベルでの音声分割（メモリ効率的）
+  const splitAudioBySize = async (file: File, chunkDurationSeconds: number): Promise<Blob[]> => {
+    const chunks: Blob[] = []
+    const chunkSize = 3 * 1024 * 1024 // 3MBずつ分割
+    
+    for (let offset = 0; offset < file.size; offset += chunkSize) {
+      const end = Math.min(offset + chunkSize, file.size)
+      const chunk = file.slice(offset, end)
+      chunks.push(chunk)
+    }
+    
+    console.log(`Binary split: ${chunks.length} chunks of ~${(chunkSize / 1024 / 1024).toFixed(1)}MB each`)
+    return chunks
+  }
+
+  // 圧縮されたWAVファイルを生成
+  const audioBufferToCompressedWav = (buffer: AudioBuffer, bitsPerSample: number = 8): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const length = buffer.length
+      const numberOfChannels = buffer.numberOfChannels
+      const sampleRate = buffer.sampleRate
+      
+      const bytesPerSample = bitsPerSample / 8
+      const dataSize = length * numberOfChannels * bytesPerSample
+      
+      const arrayBuffer = new ArrayBuffer(44 + dataSize)
+      const view = new DataView(arrayBuffer)
+      
+      // WAVヘッダーを作成
+      const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i))
+        }
+      }
+      
+      writeString(0, "RIFF")
+      view.setUint32(4, 36 + dataSize, true)
+      writeString(8, "WAVE")
+      writeString(12, "fmt ")
+      view.setUint32(16, 16, true)
+      view.setUint16(20, 1, true)
+      view.setUint16(22, numberOfChannels, true)
+      view.setUint32(24, sampleRate, true)
+      view.setUint32(28, sampleRate * numberOfChannels * bytesPerSample, true)
+      view.setUint16(32, numberOfChannels * bytesPerSample, true)
+      view.setUint16(34, bitsPerSample, true)
+      writeString(36, "data")
+      view.setUint32(40, dataSize, true)
+      
+      // 音声データを書き込み
+      let offset = 44
+      for (let i = 0; i < length; i++) {
+        for (let channel = 0; channel < numberOfChannels; channel++) {
+          const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]))
+          
+          if (bitsPerSample === 8) {
+            const unsignedSample = Math.round((sample + 1) * 127.5)
+            view.setUint8(offset, unsignedSample)
+            offset += 1
+          } else {
+            const signedSample = Math.round(sample * 32767)
+            view.setInt16(offset, signedSample, true)
+            offset += 2
+          }
+        }
+      }
+      
+      resolve(new Blob([arrayBuffer], { type: "audio/wav" }))
+    })
   }
 
   const audioBufferToWav = (buffer: AudioBuffer): Promise<Blob> => {
@@ -402,6 +641,10 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     setCompressionInfo(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
+    }
+    // 親コンポーネントの削除ハンドラーを呼び出す
+    if (onTranscriptionClear) {
+      onTranscriptionClear()
     }
   }
 

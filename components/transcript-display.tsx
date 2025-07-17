@@ -27,7 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import AIModelSelector, { type AIModel } from "./ai-model-selector"
+import { useAiConfig } from "@/contexts/ai-config-context"
 
 import { SpeakerProfile, SpeakerSegment } from "@/lib/speaker-identification"
 
@@ -48,6 +48,7 @@ interface TranscriptDisplayProps {
   }
   recordId?: string
   onDelete?: () => void
+  onClear?: () => void
   onRegenerateMinutes?: (newMinutes: any) => void
 }
 
@@ -58,6 +59,7 @@ export default function TranscriptDisplay({
   minutes,
   recordId,
   onDelete,
+  onClear,
   onRegenerateMinutes,
 }: TranscriptDisplayProps) {
   const [activeTab, setActiveTab] = useState("minutes")
@@ -65,8 +67,8 @@ export default function TranscriptDisplay({
   const [isRegenerating, setIsRegenerating] = useState(false)
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false)
   const [userInstructions, setUserInstructions] = useState("")
-  const [selectedModel, setSelectedModel] = useState<AIModel>("gemini")
   const { toast } = useToast()
+  const { aiConfig } = useAiConfig()
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -276,27 +278,29 @@ export default function TranscriptDisplay({
             // APIエラーでも続行（ローカルからは削除する）
           }
         } catch (error) {
-          console.error("Delete API call error:", error)
-          // APIエラーでも続行（ローカルからは削除する）
+          console.error("Delete API error:", error)
         }
 
-        // ローカルストレージから削除
+        // ローカルストレージからも削除
         deleteRecord(recordId)
+      }
+
+      // 親コンポーネントに削除を通知
+      if (onDelete) {
+        onDelete()
+      } else if (onClear) {
+        onClear()
       }
 
       toast({
         title: "削除完了",
         description: "記録が削除されました。",
       })
-
-      if (onDelete) {
-        onDelete()
-      }
     } catch (error) {
       console.error("Delete error:", error)
       toast({
-        title: "エラー",
-        description: error instanceof Error ? error.message : "削除中にエラーが発生しました",
+        title: "削除エラー",
+        description: "削除中にエラーが発生しました。",
         variant: "destructive",
       })
     } finally {
@@ -318,7 +322,7 @@ export default function TranscriptDisplay({
         enhancedTranscript = `${transcript}\n\n【追加指示】\n${userInstructions.trim()}`
       }
 
-      console.log("Regenerating minutes with model:", selectedModel)
+      console.log("Regenerating minutes with model:", aiConfig.provider)
       console.log("Enhanced transcript length:", enhancedTranscript.length)
 
       // サーバーサイドAPIを呼び出す
@@ -329,7 +333,7 @@ export default function TranscriptDisplay({
         },
         body: JSON.stringify({
           transcript: enhancedTranscript,
-          model: selectedModel,
+          model: aiConfig.provider,
         }),
       })
 
@@ -350,8 +354,8 @@ export default function TranscriptDisplay({
       console.log("Regenerated minutes:", JSON.stringify(newMinutes).substring(0, 200) + "...")
 
       // 使用されたモデルが要求したモデルと異なる場合は通知
-      if (usedModel && usedModel !== selectedModel) {
-        let fallbackMessage = `${selectedModel}モデルの代わりに${usedModel}を使用しました。`
+      if (usedModel && usedModel !== aiConfig.provider) {
+        let fallbackMessage = `${aiConfig.provider}モデルの代わりに${usedModel}を使用しました。`
 
         if (fallbackReason === "RATE_LIMIT") {
           fallbackMessage += "APIのレート制限に達したため、代替モデルを使用しました。"
@@ -495,7 +499,9 @@ export default function TranscriptDisplay({
             <DialogDescription>AIモデルを選択し、必要に応じて追加指示を入力してください。</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <AIModelSelector value={selectedModel} onChange={setSelectedModel} disabled={isRegenerating} />
+            <div className="text-sm text-gray-500">
+              選択されたAIプロバイダー: {aiConfig.provider}
+            </div>
             <div className="space-y-2">
               <label htmlFor="instructions" className="text-sm font-medium">
                 追加指示（オプション）

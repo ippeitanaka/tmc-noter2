@@ -27,6 +27,14 @@ export const processAudioFile = async (
   }
 
   try {
+    const fileSizeMB = file.size / (1024 * 1024)
+    console.log(`Processing file: ${fileSizeMB.toFixed(2)}MB, Target: ${targetSizeMB}MB`)
+
+    // 大きなファイルの場合、チャンク処理を使用
+    if (fileSizeMB > 10) {
+      return await processLargeAudioFile(file, options)
+    }
+
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
     const arrayBuffer = await file.arrayBuffer()
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
@@ -38,14 +46,11 @@ export const processAudioFile = async (
     let maxDuration = null
 
     if (compress) {
-      // より積極的な圧縮設定
-      const fileSizeMB = file.size / (1024 * 1024)
-      
       console.log(`Original file: ${fileSizeMB.toFixed(2)}MB, Target: ${targetSizeMB}MB, Duration: ${duration.toFixed(2)}s`)
 
-      // 音声を分割して処理する（15分以上の場合）
-      if (duration > 900) { // 15分以上の場合
-        maxDuration = 900 // 15分に制限
+      // 音声を分割して処理する（10分以上の場合）
+      if (duration > 600) { // 10分以上の場合
+        maxDuration = 600 // 10分に制限
         console.log(`Duration limited to ${maxDuration}s`)
       }
 
@@ -53,9 +58,9 @@ export const processAudioFile = async (
       numberOfChannels = 1 // 常にモノラル
       
       // より積極的な圧縮設定
-      if (fileSizeMB > targetSizeMB * 10) {
+      if (fileSizeMB > targetSizeMB * 8) {
         sampleRate = 8000 // 8kHz (電話品質)
-      } else if (fileSizeMB > targetSizeMB * 5) {
+      } else if (fileSizeMB > targetSizeMB * 4) {
         sampleRate = 11025 // 11kHz 
       } else if (fileSizeMB > targetSizeMB * 2) {
         sampleRate = 16000 // 16kHz
@@ -109,6 +114,97 @@ export const processAudioFile = async (
     return {
       blob: file,
       type: file.type,
+    }
+  }
+}
+
+// 大きなファイルを効率的に処理する関数
+const processLargeAudioFile = async (
+  file: File,
+  options: AudioProcessingOptions = {},
+): Promise<{ blob: Blob; type: string }> => {
+  const { compress = false, targetSizeMB = 3 } = options
+  const fileSizeMB = file.size / (1024 * 1024)
+  
+  console.log(`Processing large file: ${fileSizeMB.toFixed(2)}MB`)
+
+  try {
+    // より小さなチャンクで処理
+    const chunkSize = 2 * 1024 * 1024 // 2MB chunks
+    const chunks: Blob[] = []
+    
+    for (let offset = 0; offset < file.size; offset += chunkSize) {
+      const chunk = file.slice(offset, offset + chunkSize)
+      chunks.push(chunk)
+    }
+
+    console.log(`Split into ${chunks.length} chunks`)
+
+    // 最初のチャンクのみを使用して圧縮テスト
+    const firstChunk = chunks[0]
+    const testFile = new File([firstChunk], "test.wav", { type: file.type })
+    
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const arrayBuffer = await testFile.arrayBuffer()
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+
+    // 圧縮設定を決定
+    let sampleRate = 8000 // 大きなファイルは常に8kHz
+    let numberOfChannels = 1 // モノラル
+    
+    if (compress) {
+      // 非常に積極的な圧縮
+      if (fileSizeMB > targetSizeMB * 20) {
+        sampleRate = 6000 // 6kHz (最低品質)
+      } else if (fileSizeMB > targetSizeMB * 10) {
+        sampleRate = 8000 // 8kHz
+      } else {
+        sampleRate = 11025 // 11kHz
+      }
+    }
+
+    console.log(`Large file compression settings: ${sampleRate}Hz, ${numberOfChannels} channels`)
+
+    // 全体の音声を短時間で処理
+    const maxDuration = 300 // 5分に制限
+    const processingDuration = Math.min(maxDuration, audioBuffer.duration)
+    const newLength = Math.floor(processingDuration * sampleRate)
+    
+    const offlineContext = new OfflineAudioContext(numberOfChannels, newLength, sampleRate)
+    
+    const source = offlineContext.createBufferSource()
+    source.buffer = audioBuffer
+    source.connect(offlineContext.destination)
+    source.start(0)
+
+    const renderedBuffer = await offlineContext.startRendering()
+    await audioContext.close()
+
+    // 最大圧縮でWAVファイルを生成
+    const wavBlob = audioBufferToCompressedWav(renderedBuffer, 8)
+
+    console.log(`Large file compression result: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(wavBlob.size / 1024 / 1024).toFixed(2)}MB`)
+
+    return {
+      blob: wavBlob,
+      type: "audio/wav",
+    }
+  } catch (error) {
+    console.error("Large file processing error:", error)
+    
+    // フォールバック: 元のファイルを大幅に短縮
+    try {
+      const truncatedFile = file.slice(0, 2 * 1024 * 1024) // 最初の2MBのみ
+      return {
+        blob: truncatedFile,
+        type: file.type,
+      }
+    } catch (fallbackError) {
+      console.error("Fallback processing error:", fallbackError)
+      return {
+        blob: file,
+        type: file.type,
+      }
     }
   }
 }

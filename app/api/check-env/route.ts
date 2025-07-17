@@ -6,8 +6,16 @@ export async function GET() {
     const openaiApiKey = process.env.OPENAI_API_KEY
     const geminiApiKey = process.env.GEMINI_API_KEY
     const deepseekApiKey = process.env.DEEPSEEK_API_KEY
+    const assemblyaiApiKey = process.env.ASSEMBLYAI_API_KEY
+    const azureSpeechKey = process.env.AZURE_SPEECH_KEY
 
     return NextResponse.json({
+      openai: !!openaiApiKey,
+      gemini: !!geminiApiKey,
+      deepseek: !!deepseekApiKey,
+      assemblyai: !!assemblyaiApiKey,
+      azure: !!azureSpeechKey,
+      // レガシー対応
       openaiAvailable: !!openaiApiKey,
       geminiAvailable: !!geminiApiKey,
       deepseekAvailable: !!deepseekApiKey,

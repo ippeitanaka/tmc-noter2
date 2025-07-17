@@ -5,6 +5,8 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/toaster"
 import { RecordingProvider } from "@/contexts/recording-context"
+import { ApiConfigProvider } from "@/contexts/api-config-context"
+import { AiConfigProvider } from "@/contexts/ai-config-context"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -34,10 +36,14 @@ export default function RootLayout({
     <html lang="ja" suppressHydrationWarning>
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
-          <RecordingProvider>
-            {children}
-            <Toaster />
-          </RecordingProvider>
+          <ApiConfigProvider>
+            <AiConfigProvider>
+              <RecordingProvider>
+                {children}
+                <Toaster />
+              </RecordingProvider>
+            </AiConfigProvider>
+          </ApiConfigProvider>
         </ThemeProvider>
       </body>
     </html>
