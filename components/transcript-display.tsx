@@ -348,7 +348,7 @@ export default function TranscriptDisplay({
         toast({
           title: "モデル変更通知",
           description: fallbackMessage,
-          variant: "warning",
+          variant: "destructive",
         })
       } else {
         toast({
