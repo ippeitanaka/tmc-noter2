@@ -116,6 +116,8 @@ export default function TranscriptDisplay({
   // formatMinutesAsText関数を改善 - 新しい形式に対応
   const formatMinutesAsText = () => {
     // 新しい議事録フォーマットに変更
+    if (!minutes) return "議事録データがありません"
+    
     let formattedText = `■会議名：${minutes.meetingName}\n`
     formattedText += `■日時：${minutes.date}\n`
     formattedText += `■参加者：${minutes.participants}\n`
@@ -138,6 +140,14 @@ export default function TranscriptDisplay({
 
   // 議事録の表示を改善 - 新しい形式に対応
   const renderMinutesContent = () => {
+    if (!minutes) {
+      return (
+        <div className="text-center p-8">
+          <p className="text-gray-500">議事録データがありません</p>
+        </div>
+      )
+    }
+
     return (
       <div className="space-y-6">
         {/* 基本情報 */}
@@ -383,7 +393,7 @@ export default function TranscriptDisplay({
     <Card className="mt-8 border-t-4 border-t-purple-500 shadow-lg">
       <CardHeader className="pb-2 sm:pb-3 px-4 sm:px-6">
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
-          <CardTitle className="text-xl sm:text-2xl font-bold text-gray-800 font-cute">{minutes.meetingName}</CardTitle>
+          <CardTitle className="text-xl sm:text-2xl font-bold text-gray-800 font-cute">{minutes?.meetingName || "会議記録"}</CardTitle>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
