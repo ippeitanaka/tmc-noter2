@@ -122,7 +122,8 @@ export default function RealtimeRecording({
         // 最終的な結果のみを文字起こしに追加
         if (finalTranscript) {
           finalTranscriptBuffer += finalTranscript
-          updateTranscript(transcript + (transcript ? ' ' : '') + finalTranscript)
+          // 既存の文字起こしに追加（上書きではなく）
+          updateTranscript(finalTranscriptBuffer)
           lastResultIndex = event.results.length
         }
       }
@@ -188,11 +189,53 @@ export default function RealtimeRecording({
       const success = await startRecording(config)
       if (success) {
         setError(null)
-        clearRecording()
+        // 文字起こしをクリアしない（録音開始時は既存の文字起こしを保持）
         
         // リアルタイム文字起こしを開始
         if (enableTranscription && speechRecognition) {
           try {
+            // 音声認識を開始する前にバッファをリセット
+            if (speechRecognition.onresult) {
+              let finalTranscriptBuffer = ''
+              let lastResultIndex = 0
+              
+              const originalOnResult = speechRecognition.onresult
+              speechRecognition.onresult = (event: any) => {
+                let interimTranscript = ''
+                let finalTranscript = ''
+                
+                // 新しい結果のみを処理
+                for (let i = lastResultIndex; i < event.results.length; i++) {
+                  const result = event.results[i]
+                  
+                  // 最も信頼度の高い結果を選択
+                  let bestTranscript = result[0].transcript
+                  let bestConfidence = result[0].confidence || 0
+                  
+                  for (let j = 1; j < result.length; j++) {
+                    if (result[j].confidence > bestConfidence) {
+                      bestTranscript = result[j].transcript
+                      bestConfidence = result[j].confidence
+                    }
+                  }
+                  
+                  if (result.isFinal) {
+                    finalTranscript += bestTranscript
+                  } else {
+                    interimTranscript += bestTranscript
+                  }
+                }
+                
+                // 最終的な結果のみを文字起こしに追加
+                if (finalTranscript) {
+                  finalTranscriptBuffer += finalTranscript + ' '
+                  // 既存の文字起こしに追加（上書きではなく）
+                  updateTranscript(transcript + (transcript ? ' ' : '') + finalTranscriptBuffer)
+                  lastResultIndex = event.results.length
+                }
+              }
+            }
+            
             speechRecognition.start()
             setIsTranscribing(true)
             
