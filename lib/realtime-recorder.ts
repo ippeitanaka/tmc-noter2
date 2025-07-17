@@ -1,4 +1,6 @@
 // リアルタイム録音機能
+import { RecordingStorage, RecordingData } from './recording-storage'
+
 export interface RecordingState {
   isRecording: boolean
   isPaused: boolean
@@ -23,6 +25,8 @@ export interface RecordingConfig {
   bitDepth: number
   enableRealTimeTranscription: boolean
   enableSpeakerIdentification: boolean
+  autoSave: boolean // 自動保存
+  recordingName?: string // 録音名
 }
 
 export class RealtimeRecorder {
@@ -46,6 +50,7 @@ export class RealtimeRecorder {
   private onStateChange?: (state: RecordingState) => void
   private onChunkComplete?: (chunk: RecordingChunk) => void
   private onError?: (error: Error) => void
+  private recordingId: string | null = null
 
   constructor(config: Partial<RecordingConfig> = {}) {
     this.config = {
@@ -55,6 +60,8 @@ export class RealtimeRecorder {
       bitDepth: 16,
       enableRealTimeTranscription: true,
       enableSpeakerIdentification: true,
+      autoSave: true,
+      recordingName: undefined,
       ...config
     }
   }
@@ -227,7 +234,7 @@ export class RealtimeRecorder {
   }
 
   // 録音を停止
-  public stopRecording(): void {
+  public async stopRecording(): Promise<void> {
     if (this.mediaRecorder && this.recordingState.isRecording) {
       this.mediaRecorder.stop()
       this.recordingState.isRecording = false
@@ -238,7 +245,59 @@ export class RealtimeRecorder {
       if (this.onStateChange) {
         this.onStateChange({ ...this.recordingState })
       }
+
+      // 自動保存が有効な場合は保存
+      if (this.config.autoSave && this.chunks.length > 0) {
+        await this.saveRecording()
+      }
     }
+  }
+
+  // 録音データを保存
+  public async saveRecording(name?: string): Promise<string> {
+    if (this.chunks.length === 0) {
+      throw new Error('保存する録音データがありません')
+    }
+
+    try {
+      const combinedBlob = await this.combineChunks()
+      const recordingName = name || 
+        this.config.recordingName || 
+        `録音_${new Date().toLocaleString('ja-JP', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })}`
+      
+      const recordingData: RecordingData = {
+        id: this.recordingId || `recording_${Date.now()}`,
+        name: recordingName,
+        audioBlob: combinedBlob,
+        transcript: this.getTranscript(),
+        speakerSegments: [],
+        createdAt: new Date(),
+        duration: this.recordingState.duration,
+        fileSize: combinedBlob.size
+      }
+
+      await RecordingStorage.saveRecording(recordingData)
+      this.recordingId = recordingData.id
+      
+      return recordingData.id
+    } catch (error) {
+      console.error('録音データの保存に失敗:', error)
+      throw error
+    }
+  }
+
+  // 文字起こし結果を取得
+  private getTranscript(): string {
+    return this.chunks
+      .map(chunk => chunk.transcription || '')
+      .filter(text => text.trim() !== '')
+      .join('\n')
   }
 
   // 録音時間タイマーを開始
@@ -328,9 +387,9 @@ export class RealtimeRecorder {
     }
   }
 
-  // リソースをクリーンアップ
-  public cleanup(): void {
-    this.stopRecording()
+    // リソースをクリーンアップ
+  public async cleanup(): Promise<void> {
+    await this.stopRecording()
     this.stopDurationTimer()
     
     if (this.stream) {
@@ -343,9 +402,10 @@ export class RealtimeRecorder {
       this.audioContext = null
     }
 
-    this.mediaRecorder = null
     this.analyser = null
-    this.clearRecording()
+    this.mediaRecorder = null
+    this.chunks = []
+    this.recordingId = null
   }
 
   // 録音時間を文字列でフォーマット

@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, FileAudio, X, CheckCircle, AlertTriangle } from "lucide-react"
 import { processAudioFile } from "@/lib/ffmpeg-helper"
+import { TranscriptEditor } from "./editable-transcript"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
 const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4MB (最終的なアップロード制限)
@@ -334,14 +335,16 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
 
         {/* 文字起こし結果 */}
         {transcript && (
-          <div className="space-y-2">
+          <div className="space-y-4">
             <div className="flex items-center gap-2">
               <CheckCircle className="h-4 w-4 text-green-500" />
               <span className="text-sm font-medium text-green-700">文字起こし完了</span>
             </div>
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">{transcript}</p>
-            </div>
+            <TranscriptEditor
+              transcript={transcript}
+              onTranscriptChange={setTranscript}
+              isRealtime={false}
+            />
           </div>
         )}
 

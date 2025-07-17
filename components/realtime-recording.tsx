@@ -8,6 +8,9 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { 
   Mic, 
   MicOff, 
@@ -17,7 +20,8 @@ import {
   Volume2, 
   Settings,
   Download,
-  AlertCircle
+  AlertCircle,
+  Save
 } from 'lucide-react'
 import { 
   RealtimeRecorder, 
@@ -25,9 +29,11 @@ import {
   RecordingChunk, 
   RecordingConfig 
 } from '@/lib/realtime-recorder'
+import { TranscriptEditor } from './editable-transcript'
+import { useToast } from '@/hooks/use-toast'
 
 interface RealtimeRecordingProps {
-  onRecordingComplete: (audioBlob: Blob) => void
+  onRecordingComplete?: (audioBlob: Blob) => void
   onChunkTranscribed?: (chunk: RecordingChunk, transcription: string) => void
 }
 
@@ -35,7 +41,7 @@ export default function RealtimeRecording({
   onRecordingComplete, 
   onChunkTranscribed 
 }: RealtimeRecordingProps) {
-  const [recorder] = useState(() => new RealtimeRecorder())
+  const [recorder, setRecorder] = useState<RealtimeRecorder | null>(null)
   const [recordingState, setRecordingState] = useState<RecordingState>({
     isRecording: false,
     isPaused: false,
@@ -44,22 +50,148 @@ export default function RealtimeRecording({
     totalChunks: 0,
     audioLevel: 0
   })
-  const [audioLevelData, setAudioLevelData] = useState<{ level: number; bars: number[] }>({ 
-    level: 0, 
-    bars: [] 
-  })
-  const [microphonePermission, setMicrophonePermission] = useState<'granted' | 'denied' | 'prompt'>('prompt')
-  const [config, setConfig] = useState<RecordingConfig>({
-    chunkDuration: 30,
-    sampleRate: 16000,
-    channels: 1,
-    bitDepth: 16,
-    enableRealTimeTranscription: true,
-    enableSpeakerIdentification: true
-  })
-  const [chunks, setChunks] = useState<RecordingChunk[]>([])
+  const [transcript, setTranscript] = useState("")
+  const [recordingName, setRecordingName] = useState("")
+  const [autoSave, setAutoSave] = useState(true)
+  const [enableTranscription, setEnableTranscription] = useState(true)
+  const [enableSpeakerID, setEnableSpeakerID] = useState(false)
+  const [chunkDuration, setChunkDuration] = useState(30)
   const [showSettings, setShowSettings] = useState(false)
-  const animationRef = useRef<number | null>(null)
+  useEffect(() => {
+    // デフォルト録音名を設定
+    const now = new Date()
+    const defaultName = `録音_${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}_${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`
+    setRecordingName(defaultName)
+
+    return () => {
+      if (recorder) {
+        recorder.cleanup()
+      }
+    }
+  }, [recorder])
+
+  const handleStartRecording = async () => {
+    try {
+      const newRecorder = new RealtimeRecorder({
+        chunkDuration,
+        enableRealTimeTranscription: enableTranscription,
+        enableSpeakerIdentification: enableSpeakerID,
+        autoSave,
+        recordingName: recordingName || undefined
+      })
+
+      newRecorder.setEventListeners({
+        onStateChange: (state) => {
+          setRecordingState(state)
+        },
+        onChunkComplete: (chunk) => {
+          setChunks(prev => [...prev, chunk])
+          if (chunk.transcription) {
+            setTranscript(prev => prev + (prev ? '
+' : '') + chunk.transcription)
+          }
+          if (onChunkTranscribed) {
+            onChunkTranscribed(chunk, chunk.transcription || '')
+          }
+        },
+        onError: (error) => {
+          setError(error.message)
+          toast({
+            title: "録音エラー",
+            description: error.message,
+            variant: "destructive",
+          })
+        }
+      })
+
+      const success = await newRecorder.startRecording()
+      if (success) {
+        setRecorder(newRecorder)
+        setError(null)
+        setTranscript("")
+        setChunks([])
+        toast({
+          title: "録音開始",
+          description: "録音を開始しました",
+        })
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "録音開始に失敗しました")
+      toast({
+        title: "録音エラー",
+        description: "録音を開始できませんでした",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleStopRecording = async () => {
+    if (recorder) {
+      try {
+        setIsSaving(true)
+        await recorder.stopRecording()
+        
+        if (onRecordingComplete) {
+          const combinedBlob = await recorder.combineChunks()
+          onRecordingComplete(combinedBlob)
+        }
+        
+        toast({
+          title: "録音停止",
+          description: autoSave ? "録音を停止し、データを保存しました" : "録音を停止しました",
+        })
+      } catch (error) {
+        console.error("録音停止エラー:", error)
+        toast({
+          title: "録音停止エラー",
+          description: "録音の停止に失敗しました",
+          variant: "destructive",
+        })
+      } finally {
+        setIsSaving(false)
+      }
+    }
+  }
+
+  const handlePauseRecording = () => {
+    if (recorder) {
+      recorder.pauseRecording()
+    }
+  }
+
+  const handleResumeRecording = () => {
+    if (recorder) {
+      recorder.resumeRecording()
+    }
+  }
+
+  const handleManualSave = async () => {
+    if (recorder && chunks.length > 0) {
+      try {
+        setIsSaving(true)
+        await recorder.saveRecording(recordingName)
+        toast({
+          title: "保存完了",
+          description: "録音データを保存しました",
+        })
+      } catch (error) {
+        console.error("手動保存エラー:", error)
+        toast({
+          title: "保存エラー",
+          description: "録音データの保存に失敗しました",
+          variant: "destructive",
+        })
+      } finally {
+        setIsSaving(false)
+      }
+    }
+  }
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
 
   // リアルタイム録音の初期化
   useEffect(() => {

@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Mic, MicOff, AlertTriangle, Wifi, WifiOff } from "lucide-react"
+import { TranscriptEditor } from "./editable-transcript"
 
 interface SpeechRecognitionEvent {
   results: SpeechRecognitionResultList
@@ -320,8 +321,7 @@ const RealtimeTranscription = () => {
         </div>
 
         {/* 文字起こし結果 */}
-        <div className="space-y-2">
-          <Label>文字起こし結果:</Label>
+        <div className="space-y-4">
           <div className="min-h-[200px] p-3 border rounded-md bg-gray-50">
             <div className="whitespace-pre-wrap">
               {transcript}
@@ -331,6 +331,15 @@ const RealtimeTranscription = () => {
               <div className="text-gray-400 text-center py-8">録音ボタンを押して音声認識を開始してください</div>
             )}
           </div>
+          
+          {/* 編集可能な文字起こし結果 */}
+          {transcript && (
+            <TranscriptEditor
+              transcript={transcript}
+              onTranscriptChange={setTranscript}
+              isRealtime={true}
+            />
+          )}
         </div>
       </CardContent>
     </Card>
