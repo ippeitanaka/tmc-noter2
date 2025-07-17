@@ -2,13 +2,6 @@ import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabase-client"
 import { createServerAdminClient } from "@/lib/supabase-server"
 
-type TestResult<T = unknown> = {
-  success: boolean
-  error: string | null
-  data?: T
-  buckets?: string[]
-}
-
 export async function GET() {
   try {
     console.log("=== Supabase接続テスト開始 ===")
@@ -24,7 +17,7 @@ export async function GET() {
     console.log("環境変数チェック:", envCheck)
 
     // 1. クライアント接続テスト
-    const clientTest: TestResult = { success: false, error: null }
+    const clientTest = { success: false, error: null as string | null, data: null as any }
     try {
       const { data, error } = await supabase.from("audio_files").select("count", { count: "exact" }).limit(0)
       if (error) {
@@ -38,7 +31,7 @@ export async function GET() {
     }
 
     // 2. サーバー管理者接続テスト
-    const adminTest: TestResult = { success: false, error: null }
+    const adminTest = { success: false, error: null as string | null, data: null as any }
     try {
       const adminClient = createServerAdminClient()
       const { data, error } = await adminClient.from("audio_files").select("count", { count: "exact" }).limit(0)
@@ -53,7 +46,7 @@ export async function GET() {
     }
 
     // 3. ストレージバケットテスト
-    const storageTest: TestResult = { success: false, error: null, buckets: [] }
+    const storageTest = { success: false, error: null as string | null, buckets: [] as string[] }
     try {
       const { data: buckets, error } = await supabase.storage.listBuckets()
       if (error) {
@@ -67,7 +60,7 @@ export async function GET() {
     }
 
     // 4. テストデータの挿入試行
-    const insertTest: TestResult = { success: false, error: null }
+    const insertTest = { success: false, error: null as string | null, data: null as any }
     try {
       const testRecord = {
         file_path: `test/${Date.now()}-test.mp3`,
@@ -115,7 +108,7 @@ export async function GET() {
         error: error instanceof Error ? error.message : String(error),
         timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }
@@ -128,10 +121,12 @@ export async function DELETE() {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
+    const deletedCount = Array.isArray(data) ? data.length : 0
+
     return NextResponse.json({
       success: true,
       message: "テストデータを削除しました",
-      deletedCount: data?.length || 0,
+      deletedCount,
     })
   } catch (error) {
     return NextResponse.json(
@@ -139,7 +134,7 @@ export async function DELETE() {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }
