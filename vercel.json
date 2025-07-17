@@ -4,8 +4,5 @@
     "app/api/**/*.ts": {
       "maxDuration": 300
     }
-  },
-  "limits": {
-    "maxDuration": 300
   }
 }
