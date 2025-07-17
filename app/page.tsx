@@ -15,17 +15,22 @@ import { SummaryResult } from "@/lib/rule-based-summarizer"
 import { FilledTemplate } from "@/lib/meeting-templates"
 import { TranscriptionTabs } from "@/components/transcription-tabs"
 import { Footer } from "@/components/footer"
+import { useRecording } from "@/contexts/recording-context"
 
 export default function Home() {
-  const [transcript, setTranscript] = useState("")
+  const { transcript: recordingTranscript, audioBlob } = useRecording()
+  const [uploadTranscript, setUploadTranscript] = useState("")
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null)
   const [speakerSegments, setSpeakerSegments] = useState<SpeakerSegment[]>([])
   const [speakerProfiles, setSpeakerProfiles] = useState<SpeakerProfile[]>([])
   const [summary, setSummary] = useState<SummaryResult | null>(null)
   const [generatedTemplate, setGeneratedTemplate] = useState<FilledTemplate | null>(null)
 
+  // 現在のアクティブな文字起こしを取得
+  const currentTranscript = recordingTranscript || uploadTranscript
+
   const handleTranscriptionComplete = (transcriptText: string) => {
-    setTranscript(transcriptText)
+    setUploadTranscript(transcriptText)
   }
 
   const handleAudioProcessed = (buffer: AudioBuffer) => {
@@ -48,12 +53,29 @@ export default function Home() {
     setGeneratedTemplate(template)
   }
 
-  const handleRealtimeRecording = (audioBlob: Blob) => {
+  const handleRealtimeRecording = (recordingBlob: Blob) => {
     // リアルタイム録音完了時の処理
-    // 音声ファイルを自動的にアップロード処理に渡す
-    const file = new File([audioBlob], `recording_${Date.now()}.webm`, { type: 'audio/webm' })
-    // FileUploadFormの処理を呼び出す（実装は後で調整）
-    console.log('Recording completed:', file)
+    console.log('Recording completed:', recordingBlob)
+    
+    // 音声データをAudioBufferに変換して話者識別で使用
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const reader = new FileReader()
+    
+    reader.onload = async (e) => {
+      try {
+        const arrayBuffer = e.target?.result as ArrayBuffer
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+        setAudioBuffer(audioBuffer)
+        
+        // 話者識別を自動実行
+        // TODO: 自動的に話者識別を実行する処理を追加
+        
+      } catch (error) {
+        console.error('Failed to process audio:', error)
+      }
+    }
+    
+    reader.readAsArrayBuffer(recordingBlob)
   }
 
   return (
@@ -75,9 +97,9 @@ export default function Home() {
               onTranscriptionComplete={handleTranscriptionComplete}
               onAudioProcessed={handleAudioProcessed}
             />
-            {transcript && (
+            {currentTranscript && (
               <TranscriptDisplay 
-                transcript={transcript}
+                transcript={currentTranscript}
               />
             )}
           </TabsContent>
@@ -86,18 +108,23 @@ export default function Home() {
             <RealtimeRecording 
               onRecordingComplete={handleRealtimeRecording}
             />
+            {recordingTranscript && (
+              <TranscriptDisplay 
+                transcript={recordingTranscript}
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="speakers" className="space-y-6">
             <SpeakerIdentification
               audioBuffer={audioBuffer}
-              transcript={transcript}
+              transcript={currentTranscript}
               onSpeakerSegments={handleSpeakerSegments}
               onSpeakerProfiles={handleSpeakerProfiles}
             />
-            {transcript && speakerSegments.length > 0 && (
+            {currentTranscript && speakerSegments.length > 0 && (
               <TranscriptDisplay 
-                transcript={transcript}
+                transcript={currentTranscript}
                 speakerSegments={speakerSegments}
                 speakerProfiles={speakerProfiles}
               />
@@ -106,14 +133,14 @@ export default function Home() {
 
           <TabsContent value="summary" className="space-y-6">
             <SummaryUI
-              transcript={transcript}
+              transcript={currentTranscript}
               onSummaryComplete={handleSummaryComplete}
             />
           </TabsContent>
 
           <TabsContent value="template" className="space-y-6">
             <TemplateUI
-              transcript={transcript}
+              transcript={currentTranscript}
               summary={summary}
               onTemplateGenerated={handleTemplateGenerated}
             />

@@ -23,48 +23,43 @@ import {
   AlertCircle,
   Save
 } from 'lucide-react'
-import { 
-  RealtimeRecorder, 
-  RecordingState, 
-  RecordingChunk, 
-  RecordingConfig 
-} from '@/lib/realtime-recorder'
+import { useRecording } from '@/contexts/recording-context'
 import { EditableTranscript } from './editable-transcript'
 import { useToast } from '@/hooks/use-toast'
 
 interface RealtimeRecordingProps {
   onRecordingComplete?: (audioBlob: Blob) => void
-  onChunkTranscribed?: (chunk: RecordingChunk, transcription: string) => void
 }
 
 export default function RealtimeRecording({ 
-  onRecordingComplete, 
-  onChunkTranscribed 
+  onRecordingComplete
 }: RealtimeRecordingProps) {
-  const [recorder, setRecorder] = useState<RealtimeRecorder | null>(null)
-  const [recordingState, setRecordingState] = useState<RecordingState>({
-    isRecording: false,
-    isPaused: false,
-    duration: 0,
-    currentChunk: 0,
-    totalChunks: 0,
-    audioLevel: 0
-  })
-  const [transcript, setTranscript] = useState("")
+  const { 
+    recordingState, 
+    chunks, 
+    transcript, 
+    isRecording,
+    startRecording, 
+    stopRecording, 
+    pauseRecording, 
+    resumeRecording,
+    saveRecording,
+    clearRecording,
+    updateTranscript,
+    audioBlob
+  } = useRecording()
+  
   const [recordingName, setRecordingName] = useState("")
   const [autoSave, setAutoSave] = useState(true)
   const [enableTranscription, setEnableTranscription] = useState(true)
   const [enableSpeakerID, setEnableSpeakerID] = useState(false)
   const [chunkDuration, setChunkDuration] = useState(30)
   const [showSettings, setShowSettings] = useState(false)
-  const [chunks, setChunks] = useState<RecordingChunk[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [microphonePermission, setMicrophonePermission] = useState<'granted' | 'denied' | 'prompt'>('prompt')
-  const [audioLevelData, setAudioLevelData] = useState({ level: 0, bars: Array(10).fill(0) })
   const [speechRecognition, setSpeechRecognition] = useState<any>(null)
   const [isTranscribing, setIsTranscribing] = useState(false)
-  const animationRef = useRef<number>(0)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -96,7 +91,7 @@ export default function RealtimeRecording({
         }
         
         if (finalTranscript) {
-          setTranscript(prev => prev + (prev ? ' ' : '') + finalTranscript)
+          updateTranscript(transcript + (transcript ? ' ' : '') + finalTranscript)
         }
       }
       
@@ -111,58 +106,22 @@ export default function RealtimeRecording({
       
       setSpeechRecognition(recognition)
     }
-
-    return () => {
-      if (recorder) {
-        recorder.cleanup()
-      }
-    }
-  }, [recorder])
+  }, [])
 
   const handleStartRecording = async () => {
     try {
-      const newRecorder = new RealtimeRecorder({
+      const config = {
         chunkDuration,
         enableRealTimeTranscription: enableTranscription,
         enableSpeakerIdentification: enableSpeakerID,
         autoSave,
         recordingName: recordingName || undefined
-      })
+      }
 
-      newRecorder.setEventListeners({
-        onStateChange: (state) => {
-          setRecordingState(state)
-        },
-        onChunkComplete: (chunk) => {
-          console.log('Chunk received:', chunk) // デバッグ用
-          setChunks(prev => {
-            const newChunks = [...prev, chunk]
-            console.log('Total chunks:', newChunks.length) // デバッグ用
-            return newChunks
-          })
-          if (chunk.transcription) {
-            setTranscript(prev => prev + (prev ? '\n' : '') + chunk.transcription)
-          }
-          if (onChunkTranscribed) {
-            onChunkTranscribed(chunk, chunk.transcription || '')
-          }
-        },
-        onError: (error) => {
-          setError(error.message)
-          toast({
-            title: "録音エラー",
-            description: error.message,
-            variant: "destructive",
-          })
-        }
-      })
-
-      const success = await newRecorder.startRecording()
+      const success = await startRecording(config)
       if (success) {
-        setRecorder(newRecorder)
         setError(null)
-        setTranscript("")
-        setChunks([])
+        clearRecording()
         
         // リアルタイム文字起こしを開始
         if (enableTranscription && speechRecognition) {
@@ -190,69 +149,53 @@ export default function RealtimeRecording({
   }
 
   const handleStopRecording = async () => {
-    if (recorder) {
-      try {
-        setIsSaving(true)
-        
-        // リアルタイム文字起こしを停止
-        if (speechRecognition && isTranscribing) {
-          speechRecognition.stop()
-          setIsTranscribing(false)
-        }
-        
-        await recorder.stopRecording()
-        
-        // チャンクが存在する場合のみ結合処理を実行
-        if (onRecordingComplete && chunks.length > 0) {
-          try {
-            const combinedBlob = await recorder.combineChunks()
-            onRecordingComplete(combinedBlob)
-          } catch (error) {
-            console.error('録音データの結合に失敗しました:', error)
-            toast({
-              title: "録音データ結合エラー",
-              description: "録音データの結合に失敗しましたが、録音は停止されました",
-              variant: "destructive",
-            })
-          }
-        }
-        
-        toast({
-          title: "録音停止",
-          description: chunks.length > 0 
-            ? (autoSave ? "録音を停止し、データを保存しました" : "録音を停止しました")
-            : "録音を停止しました（録音データが検出されませんでした）",
-        })
-      } catch (error) {
-        console.error("録音停止エラー:", error)
-        toast({
-          title: "録音停止エラー",
-          description: "録音の停止に失敗しました",
-          variant: "destructive",
-        })
-      } finally {
-        setIsSaving(false)
+    try {
+      setIsSaving(true)
+      
+      // リアルタイム文字起こしを停止
+      if (speechRecognition && isTranscribing) {
+        speechRecognition.stop()
+        setIsTranscribing(false)
       }
+      
+      await stopRecording()
+      
+      // 録音完了時の処理
+      if (onRecordingComplete && audioBlob) {
+        onRecordingComplete(audioBlob)
+      }
+      
+      toast({
+        title: "録音停止",
+        description: chunks.length > 0 
+          ? (autoSave ? "録音を停止し、データを保存しました" : "録音を停止しました")
+          : "録音を停止しました（録音データが検出されませんでした）",
+      })
+    } catch (error) {
+      console.error("録音停止エラー:", error)
+      toast({
+        title: "録音停止エラー",
+        description: "録音の停止に失敗しました",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSaving(false)
     }
   }
 
   const handlePauseRecording = () => {
-    if (recorder) {
-      recorder.pauseRecording()
-    }
+    pauseRecording()
   }
 
   const handleResumeRecording = () => {
-    if (recorder) {
-      recorder.resumeRecording()
-    }
+    resumeRecording()
   }
 
   const handleManualSave = async () => {
-    if (recorder && chunks.length > 0) {
+    if (chunks.length > 0) {
       try {
         setIsSaving(true)
-        await recorder.saveRecording(recordingName)
+        await saveRecording(recordingName)
         toast({
           title: "保存完了",
           description: "録音データを保存しました",
@@ -276,45 +219,11 @@ export default function RealtimeRecording({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  // 音声レベルのアニメーション
-  useEffect(() => {
-    if (recordingState.isRecording && !recordingState.isPaused && recorder) {
-      const updateAudioLevel = () => {
-        const levelData = recorder.getAudioLevelData()
-        setAudioLevelData(levelData)
-        animationRef.current = requestAnimationFrame(updateAudioLevel)
-      }
-      animationRef.current = requestAnimationFrame(updateAudioLevel)
-    }
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
-  }, [recordingState.isRecording, recordingState.isPaused, recorder])
-
-  // マイク権限を確認
-  const checkMicrophonePermission = async () => {
-    try {
-      if (recorder) {
-        const hasAccess = await recorder.requestMicrophoneAccess()
-        setMicrophonePermission(hasAccess ? 'granted' : 'denied')
-        return hasAccess
-      }
-      return false
-    } catch (error) {
-      setMicrophonePermission('denied')
-      return false
-    }
-  }
-
   // 録音データをダウンロード
   const downloadRecording = async () => {
-    if (recorder && chunks.length > 0) {
+    if (audioBlob) {
       try {
-        const combinedBlob = await recorder.combineChunks()
-        const url = URL.createObjectURL(combinedBlob)
+        const url = URL.createObjectURL(audioBlob)
         const a = document.createElement('a')
         a.href = url
         a.download = `recording_${new Date().toISOString().split('T')[0]}.webm`
@@ -342,25 +251,6 @@ export default function RealtimeRecording({
         variant: "destructive",
       })
     }
-  }
-
-  // 音声レベルバーを表示
-  const renderAudioLevelBars = () => {
-    return (
-      <div className="flex items-end gap-1 h-12">
-        {audioLevelData.bars.map((level, index) => (
-          <div
-            key={index}
-            className={`w-2 bg-gradient-to-t transition-all duration-100 ${
-              level > 60 ? 'from-green-400 to-red-500' :
-              level > 30 ? 'from-green-400 to-yellow-500' :
-              'from-green-400 to-green-600'
-            }`}
-            style={{ height: `${Math.max(2, (level / 100) * 48)}px` }}
-          />
-        ))}
-      </div>
-    )
   }
 
   return (
@@ -480,7 +370,7 @@ export default function RealtimeRecording({
         </div>
 
         {/* 録音状態表示 */}
-        {recordingState.isRecording && (
+        {isRecording && (
           <div className="space-y-4">
             {/* 録音時間とステータス */}
             <div className="flex items-center justify-between">
@@ -510,7 +400,7 @@ export default function RealtimeRecording({
               </div>
             </div>
 
-            {/* 音声レベル可視化 */}
+            {/* 音声レベル表示（簡易版） */}
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <Volume2 className="w-4 h-4" />
@@ -518,9 +408,14 @@ export default function RealtimeRecording({
               </div>
               
               <div className="flex items-center gap-4">
-                {renderAudioLevelBars()}
+                <div className="flex-1 bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-green-500 h-2 rounded-full transition-all duration-100"
+                    style={{ width: `${recordingState.audioLevel}%` }}
+                  />
+                </div>
                 <div className="text-sm text-gray-600">
-                  {audioLevelData.level.toFixed(0)}%
+                  {recordingState.audioLevel.toFixed(0)}%
                 </div>
               </div>
             </div>
@@ -586,7 +481,7 @@ export default function RealtimeRecording({
             {transcript ? (
               <EditableTranscript
                 initialText={transcript}
-                onSave={(text: string) => setTranscript(text)}
+                onSave={(text: string) => updateTranscript(text)}
               />
             ) : (
               <div className="p-4 border rounded-lg bg-gray-50 text-gray-500 text-center">
