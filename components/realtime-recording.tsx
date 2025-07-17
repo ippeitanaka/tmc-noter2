@@ -29,7 +29,7 @@ import {
   RecordingChunk, 
   RecordingConfig 
 } from '@/lib/realtime-recorder'
-import { TranscriptEditor } from './editable-transcript'
+import { EditableTranscript } from './editable-transcript'
 import { useToast } from '@/hooks/use-toast'
 
 interface RealtimeRecordingProps {
@@ -57,6 +57,14 @@ export default function RealtimeRecording({
   const [enableSpeakerID, setEnableSpeakerID] = useState(false)
   const [chunkDuration, setChunkDuration] = useState(30)
   const [showSettings, setShowSettings] = useState(false)
+  const [chunks, setChunks] = useState<RecordingChunk[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [microphonePermission, setMicrophonePermission] = useState<'granted' | 'denied' | 'prompt'>('prompt')
+  const [audioLevelData, setAudioLevelData] = useState({ level: 0, bars: Array(10).fill(0) })
+  const animationRef = useRef<number>(0)
+  const { toast } = useToast()
+
   useEffect(() => {
     // デフォルト録音名を設定
     const now = new Date()
@@ -87,8 +95,7 @@ export default function RealtimeRecording({
         onChunkComplete: (chunk) => {
           setChunks(prev => [...prev, chunk])
           if (chunk.transcription) {
-            setTranscript(prev => prev + (prev ? '
-' : '') + chunk.transcription)
+            setTranscript(prev => prev + (prev ? '\n' : '') + chunk.transcription)
           }
           if (onChunkTranscribed) {
             onChunkTranscribed(chunk, chunk.transcription || '')
@@ -193,33 +200,9 @@ export default function RealtimeRecording({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
 
-  // リアルタイム録音の初期化
-  useEffect(() => {
-    recorder.setEventListeners({
-      onStateChange: (state) => {
-        setRecordingState(state)
-      },
-      onChunkComplete: (chunk) => {
-        setChunks(prev => [...prev, chunk])
-        // チャンクの文字起こしを実行（実際の実装では非同期で実行）
-        if (config.enableRealTimeTranscription && onChunkTranscribed) {
-          // ここで実際のWhisper APIを呼び出す
-          // onChunkTranscribed(chunk, transcription)
-        }
-      },
-      onError: (error) => {
-        console.error('Recording error:', error)
-      }
-    })
-
-    return () => {
-      recorder.cleanup()
-    }
-  }, [recorder, config, onChunkTranscribed])
-
   // 音声レベルのアニメーション
   useEffect(() => {
-    if (recordingState.isRecording && !recordingState.isPaused) {
+    if (recordingState.isRecording && !recordingState.isPaused && recorder) {
       const updateAudioLevel = () => {
         const levelData = recorder.getAudioLevelData()
         setAudioLevelData(levelData)
@@ -238,68 +221,35 @@ export default function RealtimeRecording({
   // マイク権限を確認
   const checkMicrophonePermission = async () => {
     try {
-      const hasAccess = await recorder.requestMicrophoneAccess()
-      setMicrophonePermission(hasAccess ? 'granted' : 'denied')
-      return hasAccess
+      if (recorder) {
+        const hasAccess = await recorder.requestMicrophoneAccess()
+        setMicrophonePermission(hasAccess ? 'granted' : 'denied')
+        return hasAccess
+      }
+      return false
     } catch (error) {
       setMicrophonePermission('denied')
       return false
     }
   }
 
-  // 録音開始
-  const startRecording = async () => {
-    const hasAccess = await checkMicrophonePermission()
-    if (!hasAccess) return
-
-    const success = await recorder.startRecording()
-    if (success) {
-      setChunks([])
-    }
-  }
-
-  // 録音一時停止
-  const pauseRecording = () => {
-    recorder.pauseRecording()
-  }
-
-  // 録音再開
-  const resumeRecording = () => {
-    recorder.resumeRecording()
-  }
-
-  // 録音停止
-  const stopRecording = async () => {
-    recorder.stopRecording()
-    
-    try {
-      const combinedBlob = await recorder.combineChunks()
-      onRecordingComplete(combinedBlob)
-    } catch (error) {
-      console.error('Failed to combine chunks:', error)
-    }
-  }
-
   // 録音データをダウンロード
   const downloadRecording = async () => {
-    try {
-      const combinedBlob = await recorder.combineChunks()
-      const url = URL.createObjectURL(combinedBlob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `recording_${new Date().toISOString().split('T')[0]}.webm`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (error) {
-      console.error('Download failed:', error)
+    if (recorder) {
+      try {
+        const combinedBlob = await recorder.combineChunks()
+        const url = URL.createObjectURL(combinedBlob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `recording_${new Date().toISOString().split('T')[0]}.webm`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } catch (error) {
+        console.error('Download failed:', error)
+      }
     }
-  }
-
-  // 時間をフォーマット
-  const formatTime = (seconds: number) => {
-    return recorder.formatDuration(seconds)
   }
 
   // 音声レベルバーを表示
@@ -330,6 +280,14 @@ export default function RealtimeRecording({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* エラー表示 */}
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
         {/* マイク権限の確認 */}
         {microphonePermission === 'denied' && (
           <Alert>
@@ -340,11 +298,42 @@ export default function RealtimeRecording({
           </Alert>
         )}
 
+        {/* 録音設定 */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="recordingName">録音名</Label>
+            <Input
+              id="recordingName"
+              value={recordingName}
+              onChange={(e) => setRecordingName(e.target.value)}
+              disabled={recordingState.isRecording}
+            />
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="autoSave"
+                checked={autoSave}
+                onCheckedChange={setAutoSave}
+                disabled={recordingState.isRecording}
+              />
+              <Label htmlFor="autoSave">自動保存</Label>
+            </div>
+            <Button
+              onClick={() => setShowSettings(!showSettings)}
+              variant="outline"
+              size="sm"
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+
         {/* 録音コントロール */}
         <div className="flex items-center gap-4">
           {!recordingState.isRecording ? (
             <Button
-              onClick={startRecording}
+              onClick={handleStartRecording}
               disabled={microphonePermission === 'denied'}
               className="flex items-center gap-2"
             >
@@ -355,7 +344,7 @@ export default function RealtimeRecording({
             <div className="flex items-center gap-2">
               {recordingState.isPaused ? (
                 <Button
-                  onClick={resumeRecording}
+                  onClick={handleResumeRecording}
                   variant="outline"
                   className="flex items-center gap-2"
                 >
@@ -364,7 +353,7 @@ export default function RealtimeRecording({
                 </Button>
               ) : (
                 <Button
-                  onClick={pauseRecording}
+                  onClick={handlePauseRecording}
                   variant="outline"
                   className="flex items-center gap-2"
                 >
@@ -374,23 +363,28 @@ export default function RealtimeRecording({
               )}
               
               <Button
-                onClick={stopRecording}
+                onClick={handleStopRecording}
                 variant="destructive"
                 className="flex items-center gap-2"
+                disabled={isSaving}
               >
                 <Square className="w-4 h-4" />
-                停止
+                {isSaving ? "保存中..." : "停止"}
               </Button>
+
+              {!autoSave && (
+                <Button
+                  onClick={handleManualSave}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                  disabled={isSaving}
+                >
+                  <Save className="w-4 h-4" />
+                  保存
+                </Button>
+              )}
             </div>
           )}
-
-          <Button
-            onClick={() => setShowSettings(!showSettings)}
-            variant="outline"
-            size="sm"
-          >
-            <Settings className="w-4 h-4" />
-          </Button>
         </div>
 
         {/* 録音状態表示 */}
@@ -404,7 +398,7 @@ export default function RealtimeRecording({
                     recordingState.isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'
                   }`} />
                   <span className="font-mono text-lg">
-                    {formatTime(recordingState.duration)}
+                    {formatDuration(recordingState.duration)}
                   </span>
                 </div>
                 
@@ -442,59 +436,51 @@ export default function RealtimeRecording({
             
             <div className="space-y-3">
               <div>
-                <label className="text-sm font-medium mb-2 block">
-                  チャンク時間: {config.chunkDuration}秒
-                </label>
+                <Label>チャンク時間: {chunkDuration}秒</Label>
                 <Slider
-                  value={[config.chunkDuration]}
-                  onValueChange={([value]) => setConfig(prev => ({ ...prev, chunkDuration: value }))}
+                  value={[chunkDuration]}
+                  onValueChange={([value]) => setChunkDuration(value)}
                   min={10}
                   max={60}
                   step={5}
                   className="w-full"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium mb-2 block">
-                  サンプリングレート: {config.sampleRate}Hz
-                </label>
-                <Slider
-                  value={[config.sampleRate]}
-                  onValueChange={([value]) => setConfig(prev => ({ ...prev, sampleRate: value }))}
-                  min={8000}
-                  max={44100}
-                  step={1000}
-                  className="w-full"
+                  disabled={recordingState.isRecording}
                 />
               </div>
 
               <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={config.enableRealTimeTranscription}
-                    onChange={(e) => setConfig(prev => ({ 
-                      ...prev, 
-                      enableRealTimeTranscription: e.target.checked 
-                    }))}
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="enableTranscription"
+                    checked={enableTranscription}
+                    onCheckedChange={setEnableTranscription}
+                    disabled={recordingState.isRecording}
                   />
-                  リアルタイム文字起こし
-                </label>
+                  <Label htmlFor="enableTranscription">リアルタイム文字起こし</Label>
+                </div>
 
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={config.enableSpeakerIdentification}
-                    onChange={(e) => setConfig(prev => ({ 
-                      ...prev, 
-                      enableSpeakerIdentification: e.target.checked 
-                    }))}
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="enableSpeakerID"
+                    checked={enableSpeakerID}
+                    onCheckedChange={setEnableSpeakerID}
+                    disabled={recordingState.isRecording}
                   />
-                  話者識別
-                </label>
+                  <Label htmlFor="enableSpeakerID">話者識別</Label>
+                </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* 文字起こし結果 */}
+        {enableTranscription && transcript && (
+          <div className="space-y-2">
+            <Label>文字起こし結果</Label>
+            <EditableTranscript
+              initialText={transcript}
+              onSave={(text: string) => setTranscript(text)}
+            />
           </div>
         )}
 
