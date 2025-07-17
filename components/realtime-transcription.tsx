@@ -52,13 +52,17 @@ const RealtimeTranscription = () => {
   const [errorCount, setErrorCount] = useState(0)
   const [networkError, setNetworkError] = useState(false)
   const [lastActivityTime, setLastActivityTime] = useState(Date.now())
+  const [isIntentionallyRunning, setIsIntentionallyRunning] = useState(false)
+  const [consecutiveErrors, setConsecutiveErrors] = useState(0)
 
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const isUserStoppedRef = useRef(false)
   const restartTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const activityTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const maxRetries = 5
-  const activityTimeoutDuration = 15000 // 15秒間無活動で再開
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const maxRetries = 10 // 再試行回数を増加
+  const activityTimeoutDuration = 10000 // 10秒に短縮
+  const healthCheckInterval = 5000 // 5秒ごとにヘルスチェック
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -71,7 +75,8 @@ const RealtimeTranscription = () => {
     const handleOnline = () => {
       console.log("ネットワーク接続が復旧しました")
       setNetworkError(false)
-      if (autoRestart && !isUserStoppedRef.current && !isRecording) {
+      setConsecutiveErrors(0)
+      if (autoRestart && !isUserStoppedRef.current && isIntentionallyRunning && !isRecording) {
         setTimeout(() => startRecognition(), 1000)
       }
     }
@@ -80,6 +85,31 @@ const RealtimeTranscription = () => {
       console.log("ネットワーク接続が切断されました")
       setNetworkError(true)
       setConnectionStatus("error")
+    }
+
+    // ヘルスチェック機能
+    const startHealthCheck = () => {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current)
+      }
+      
+      healthCheckIntervalRef.current = setInterval(() => {
+        // 意図的に実行中で、自動再開が有効で、ユーザーが停止していない場合
+        if (isIntentionallyRunning && autoRestart && !isUserStoppedRef.current) {
+          // 録音中でない場合は再開を試行
+          if (!isRecording) {
+            console.log("ヘルスチェック: 録音が停止しているため再開を試行します")
+            startRecognition()
+          }
+          // 最後のアクティビティから長時間経過している場合
+          else if (Date.now() - lastActivityTime > activityTimeoutDuration * 2) {
+            console.log("ヘルスチェック: 長時間無活動のため再開を試行します")
+            if (recognitionRef.current) {
+              recognitionRef.current.stop()
+            }
+          }
+        }
+      }, healthCheckInterval)
     }
 
     window.addEventListener("online", handleOnline)
@@ -92,19 +122,65 @@ const RealtimeTranscription = () => {
       if (activityTimeoutRef.current) {
         clearTimeout(activityTimeoutRef.current)
       }
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current)
+      }
       window.removeEventListener("online", handleOnline)
       window.removeEventListener("offline", handleOffline)
     }
-  }, [autoRestart, isRecording])
+  }, [autoRestart, isRecording, isIntentionallyRunning, lastActivityTime, activityTimeoutDuration, healthCheckInterval])
+
+  // ヘルスチェックの開始/停止
+  useEffect(() => {
+    if (isIntentionallyRunning && autoRestart) {
+      const startHealthCheck = () => {
+        if (healthCheckIntervalRef.current) {
+          clearInterval(healthCheckIntervalRef.current)
+        }
+        
+        healthCheckIntervalRef.current = setInterval(() => {
+          if (isIntentionallyRunning && autoRestart && !isUserStoppedRef.current) {
+            if (!isRecording) {
+              console.log("ヘルスチェック: 録音が停止しているため再開を試行します")
+              startRecognition()
+            } else if (Date.now() - lastActivityTime > activityTimeoutDuration * 2) {
+              console.log("ヘルスチェック: 長時間無活動のため再開を試行します")
+              if (recognitionRef.current) {
+                recognitionRef.current.stop()
+              }
+            }
+          }
+        }, healthCheckInterval)
+      }
+      startHealthCheck()
+    } else {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current)
+      }
+    }
+  }, [isIntentionallyRunning, autoRestart, isRecording, lastActivityTime, activityTimeoutDuration, healthCheckInterval])
 
   const startRecognition = useCallback(() => {
     if (!isSupported) return
 
+    console.log("音声認識開始を試行します:", new Date().toISOString())
+
     try {
-      // 既存の認識を停止
+      // 既存の認識を安全に停止
       if (recognitionRef.current) {
-        recognitionRef.current.stop()
+        try {
+          recognitionRef.current.stop()
+          recognitionRef.current.abort()
+        } catch (err) {
+          console.warn("既存の認識停止時にエラー:", err)
+        }
         recognitionRef.current = null
+      }
+
+      // タイムアウトをクリア
+      if (restartTimeoutRef.current) {
+        clearTimeout(restartTimeoutRef.current)
+        restartTimeoutRef.current = null
       }
 
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -121,6 +197,7 @@ const RealtimeTranscription = () => {
         setConnectionStatus("connected")
         setNetworkError(false)
         setLastActivityTime(Date.now())
+        setConsecutiveErrors(0)
 
         // アクティビティタイムアウトの設定
         if (activityTimeoutRef.current) {
@@ -128,8 +205,14 @@ const RealtimeTranscription = () => {
         }
         activityTimeoutRef.current = setTimeout(() => {
           console.log("アクティビティタイムアウト - 音声認識を再開します")
-          if (!isUserStoppedRef.current && autoRestart) {
-            recognition.stop() // 現在の認識を停止して再開
+          if (!isUserStoppedRef.current && autoRestart && isIntentionallyRunning) {
+            try {
+              recognition.stop()
+            } catch (err) {
+              console.warn("タイムアウト時の停止エラー:", err)
+              // 強制的に再開
+              setTimeout(() => startRecognition(), 1000)
+            }
           }
         }, activityTimeoutDuration)
       }
@@ -143,8 +226,13 @@ const RealtimeTranscription = () => {
         }
         activityTimeoutRef.current = setTimeout(() => {
           console.log("アクティビティタイムアウト - 音声認識を再開します")
-          if (!isUserStoppedRef.current && autoRestart) {
-            recognition.stop() // 現在の認識を停止して再開
+          if (!isUserStoppedRef.current && autoRestart && isIntentionallyRunning) {
+            try {
+              recognition.stop()
+            } catch (err) {
+              console.warn("タイムアウト時の停止エラー:", err)
+              setTimeout(() => startRecognition(), 1000)
+            }
           }
         }, activityTimeoutDuration)
 
@@ -163,6 +251,7 @@ const RealtimeTranscription = () => {
         if (finalTranscript) {
           setTranscript((prev) => prev + finalTranscript)
           setErrorCount(0) // 成功時にエラーカウントをリセット
+          setConsecutiveErrors(0)
         }
         setInterimTranscript(interimText)
       }
@@ -170,6 +259,14 @@ const RealtimeTranscription = () => {
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
         console.error("音声認識エラー:", event.error, event.message, new Date().toISOString())
         setConnectionStatus("error")
+        setConsecutiveErrors(prev => prev + 1)
+
+        // 致命的でないエラーの場合は積極的に再開
+        if (event.error === "no-speech" || event.error === "audio-capture") {
+          console.log("非致命的エラー - 即座に再開します:", event.error)
+          // エラーカウントを増加させない
+          return
+        }
 
         // エラーカウントを増加
         setErrorCount((prev) => prev + 1)
@@ -180,12 +277,12 @@ const RealtimeTranscription = () => {
         } else if (event.error === "not-allowed") {
           setError("マイクへのアクセスが拒否されました。ブラウザの設定でマイクの使用を許可してください。")
           setIsRecording(false)
+          setIsIntentionallyRunning(false)
           isUserStoppedRef.current = true
           return
-        } else if (event.error === "no-speech") {
-          console.log("無音検出 - 自動的に再開します")
-          // 無音エラーは通常のエラーとして扱わない
-          setErrorCount((prev) => Math.max(0, prev - 1))
+        } else if (event.error === "aborted") {
+          console.log("音声認識が中止されました - 正常な動作として処理")
+          return
         } else {
           setError(`音声認識エラー: ${event.error}`)
         }
@@ -203,32 +300,39 @@ const RealtimeTranscription = () => {
 
         console.log("ユーザーによる停止フラグ:", isUserStoppedRef.current)
         console.log("自動再開フラグ:", autoRestart)
+        console.log("意図的実行フラグ:", isIntentionallyRunning)
         console.log("エラーカウント:", errorCount)
+        console.log("連続エラー:", consecutiveErrors)
 
-        if (!isUserStoppedRef.current && autoRestart && errorCount < maxRetries) {
+        // 意図的に実行中で、ユーザーが停止していない場合は常に再開を試行
+        if (isIntentionallyRunning && !isUserStoppedRef.current && autoRestart) {
           console.log("音声認識を自動的に再開します...")
-          if (restartTimeoutRef.current) {
-            clearTimeout(restartTimeoutRef.current)
+          
+          // 連続エラーが多い場合は少し長めに待機
+          let delay = 500 // デフォルト0.5秒
+          if (consecutiveErrors > 5) {
+            delay = 2000 // 2秒
+          } else if (consecutiveErrors > 3) {
+            delay = 1000 // 1秒
+          } else if (networkError) {
+            delay = 1500 // ネットワークエラーの場合は1.5秒
           }
 
-          // エラーの種類に応じて遅延時間を調整
-          let delay = 1000 // デフォルト1秒
-          if (networkError) {
-            delay = 3000 // ネットワークエラーの場合は3秒
-          } else if (errorCount > 0) {
-            delay = Math.min(2000 * errorCount, 10000) // エラー回数に応じて遅延（最大10秒）
+          // 最大再試行回数に達していても、連続エラーをリセットして再試行
+          if (errorCount >= maxRetries) {
+            console.log("最大再試行回数に達しましたが、連続エラーをリセットして再試行します")
+            setErrorCount(0)
+            delay = 3000 // 3秒待機
           }
 
           restartTimeoutRef.current = setTimeout(() => {
-            if (!isUserStoppedRef.current) {
+            if (isIntentionallyRunning && !isUserStoppedRef.current) {
               console.log("音声認識を再開します...", new Date().toISOString())
               startRecognition()
             } else {
-              console.log("ユーザーによる停止のため、再開しません")
+              console.log("停止条件のため、再開しません")
             }
           }, delay)
-        } else if (errorCount >= maxRetries) {
-          setError(`最大再試行回数(${maxRetries}回)に達しました。手動で再開してください。`)
         }
       }
 
@@ -239,15 +343,23 @@ const RealtimeTranscription = () => {
       setError("音声認識の開始に失敗しました。")
       setIsRecording(false)
       setErrorCount((prev) => prev + 1)
+      setConsecutiveErrors(prev => prev + 1)
+      
+      // 失敗してもしつこく再試行
+      if (isIntentionallyRunning && !isUserStoppedRef.current && autoRestart) {
+        setTimeout(() => startRecognition(), 2000)
+      }
     }
-  }, [isSupported, autoRestart, errorCount, maxRetries, networkError, activityTimeoutDuration])
+  }, [isSupported, autoRestart, errorCount, maxRetries, networkError, activityTimeoutDuration, isIntentionallyRunning, consecutiveErrors])
 
   const stopRecognition = useCallback(() => {
     console.log("ユーザーによる録音停止", new Date().toISOString())
     isUserStoppedRef.current = true
+    setIsIntentionallyRunning(false)
     setIsRecording(false)
     setConnectionStatus("disconnected")
     setErrorCount(0)
+    setConsecutiveErrors(0)
     setNetworkError(false)
 
     if (restartTimeoutRef.current) {
@@ -260,9 +372,15 @@ const RealtimeTranscription = () => {
       activityTimeoutRef.current = null
     }
 
+    if (healthCheckIntervalRef.current) {
+      clearInterval(healthCheckIntervalRef.current)
+      healthCheckIntervalRef.current = null
+    }
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop()
+        recognitionRef.current.abort()
       } catch (err) {
         console.error("音声認識の停止に失敗:", err)
       }
@@ -271,11 +389,13 @@ const RealtimeTranscription = () => {
   }, [])
 
   const handleToggleRecording = () => {
-    if (isRecording) {
+    if (isRecording || isIntentionallyRunning) {
       stopRecognition()
     } else {
       isUserStoppedRef.current = false
+      setIsIntentionallyRunning(true)
       setErrorCount(0)
+      setConsecutiveErrors(0)
       setError(null)
       startRecognition()
     }
@@ -286,6 +406,7 @@ const RealtimeTranscription = () => {
     setInterimTranscript("")
     setError(null)
     setErrorCount(0)
+    setConsecutiveErrors(0)
     setNetworkError(false)
     setLastActivityTime(Date.now())
   }
@@ -294,12 +415,19 @@ const RealtimeTranscription = () => {
   const forceRestart = () => {
     console.log("強制的に音声認識を再開します")
     setErrorCount(0)
+    setConsecutiveErrors(0)
     setError(null)
     setNetworkError(false)
     isUserStoppedRef.current = false
+    setIsIntentionallyRunning(true)
     
     if (recognitionRef.current) {
-      recognitionRef.current.stop()
+      try {
+        recognitionRef.current.stop()
+        recognitionRef.current.abort()
+      } catch (err) {
+        console.warn("強制再開時の停止エラー:", err)
+      }
     }
     
     setTimeout(() => {
@@ -370,10 +498,16 @@ const RealtimeTranscription = () => {
 
         {/* 接続状態の詳細情報 */}
         <div className="text-xs text-gray-500 space-y-1">
+          <div>実行状態: {isIntentionallyRunning ? "実行中" : "停止中"}</div>
           <div>最後のアクティビティ: {new Date(lastActivityTime).toLocaleTimeString()}</div>
           {errorCount > 0 && (
             <div className="text-orange-600">
               エラー回数: {errorCount}/{maxRetries}
+            </div>
+          )}
+          {consecutiveErrors > 0 && (
+            <div className="text-red-600">
+              連続エラー: {consecutiveErrors}
             </div>
           )}
         </div>
@@ -403,8 +537,9 @@ const RealtimeTranscription = () => {
             <ul className="mt-1 ml-4 list-disc text-xs space-y-1">
               <li>マイクへのアクセス許可が必要です</li>
               <li>安定したインターネット接続が必要です</li>
-              <li>自動再開機能により、途切れても自動的に再開します</li>
-              <li>15秒間無音が続くと自動的に再開されます</li>
+              <li>強力な自動再開機能により、途切れても確実に再開します</li>
+              <li>10秒間無音が続くと自動的に再開されます</li>
+              <li>5秒ごとのヘルスチェックで状態を監視します</li>
             </ul>
           </AlertDescription>
         </Alert>
@@ -414,10 +549,10 @@ const RealtimeTranscription = () => {
           <Button
             onClick={handleToggleRecording}
             className={`flex items-center gap-2 ${
-              isRecording ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"
+              isRecording || isIntentionallyRunning ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"
             }`}
           >
-            {isRecording ? (
+            {isRecording || isIntentionallyRunning ? (
               <>
                 <MicOff className="h-4 w-4" />
                 録音停止
@@ -435,7 +570,7 @@ const RealtimeTranscription = () => {
           </Button>
 
           {/* 強制再開ボタン */}
-          {errorCount > 0 && (
+          {(errorCount > 0 || consecutiveErrors > 0 || (!isRecording && isIntentionallyRunning)) && (
             <Button onClick={forceRestart} variant="outline" className="text-orange-600">
               強制再開
             </Button>
