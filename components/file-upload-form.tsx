@@ -8,9 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, FileAudio, X, CheckCircle, AlertTriangle } from "lucide-react"
+import { processAudioFile } from "@/lib/ffmpeg-helper"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
-const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4MB (Vercel無料プランの実際の制限)
+const MAX_FILE_SIZE = 4 * 1024 * 1024 // 4MB (最終的なアップロード制限)
+const MAX_INPUT_FILE_SIZE = 50 * 1024 * 1024 // 50MB (入力ファイル制限 - 自動圧縮あり)
 const CHUNK_SIZE = 4 * 1024 * 1024 // 4MB chunks (Vercel制限を考慮)
 const COMPRESSION_THRESHOLD = 3 * 1024 * 1024 // 3MB以上で圧縮を推奨
 
@@ -20,11 +22,14 @@ interface FileUploadFormProps {
 
 export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFormProps) {
   const [file, setFile] = useState<File | null>(null)
+  const [originalFile, setOriginalFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [isCompressing, setIsCompressing] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [transcript, setTranscript] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [compressionInfo, setCompressionInfo] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -35,24 +40,60 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
       return `サポートされていないファイル形式です。対応形式: ${SUPPORTED_FORMATS.join(", ")}`
     }
 
-    if (file.size > MAX_FILE_SIZE) {
-      return `ファイルサイズが大きすぎます。最大4MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
+    if (file.size > MAX_INPUT_FILE_SIZE) {
+      return `ファイルサイズが大きすぎます。最大50MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
     }
 
     return null
   }
 
-  const handleFileSelect = useCallback((selectedFile: File) => {
+  const handleFileSelect = useCallback(async (selectedFile: File) => {
     const validationError = validateFile(selectedFile)
     if (validationError) {
       setError(validationError)
       return
     }
 
-    setFile(selectedFile)
+    setOriginalFile(selectedFile)
     setError(null)
     setTranscript("")
     setUploadProgress(0)
+    setCompressionInfo(null)
+
+    // ファイルサイズが制限を超えている場合は自動圧縮を試行
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      setIsCompressing(true)
+      try {
+        const { blob, type } = await processAudioFile(selectedFile, {
+          compress: true,
+          targetSizeMB: 3, // 3MB以下に圧縮
+        })
+
+        const compressedFile = new File([blob], selectedFile.name.replace(/\.[^/.]+$/, ".wav"), {
+          type: type,
+        })
+
+        // 圧縮後のサイズをチェック
+        if (compressedFile.size > MAX_FILE_SIZE) {
+          setError(`ファイルサイズが大きすぎます。圧縮後も${(compressedFile.size / 1024 / 1024).toFixed(1)}MBです。より小さなファイルを使用してください。`)
+          setIsCompressing(false)
+          return
+        }
+
+        setFile(compressedFile)
+        setCompressionInfo(
+          `自動圧縮完了: ${(selectedFile.size / 1024 / 1024).toFixed(1)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(1)}MB`
+        )
+        setIsCompressing(false)
+      } catch (error) {
+        console.error("Compression error:", error)
+        setError("ファイル圧縮中にエラーが発生しました。より小さなファイルを使用してください。")
+        setIsCompressing(false)
+        return
+      }
+    } else {
+      setFile(selectedFile)
+    }
   }, [])
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,7 +153,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
             setError("文字起こしに失敗しました。")
           }
         } else if (xhr.status === 413) {
-          setError("ファイルサイズが大きすぎます。4MB以下のファイルを使用してください。")
+          setError("ファイルサイズが大きすぎます。自動圧縮に失敗しました。")
         } else {
           try {
             const errorResponse = JSON.parse(xhr.responseText)
@@ -141,9 +182,11 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
 
   const removeFile = () => {
     setFile(null)
+    setOriginalFile(null)
     setTranscript("")
     setError(null)
     setUploadProgress(0)
+    setCompressionInfo(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ""
     }
@@ -180,7 +223,7 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
             <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-lg font-medium text-gray-700 mb-2">ファイルをタップ</p>
             <p className="text-sm text-gray-500 mb-4">または、ドラッグ&ドロップ</p>
-            <p className="text-xs text-gray-400">対応形式: {SUPPORTED_FORMATS.join(", ").toUpperCase()} (最大4MB)</p>
+            <p className="text-xs text-gray-400">対応形式: {SUPPORTED_FORMATS.join(", ").toUpperCase()} (最大50MB・自動圧縮)</p>
             <input
               ref={fileInputRef}
               type="file"
@@ -189,6 +232,27 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
               className="hidden"
             />
           </div>
+        )}
+
+        {/* 圧縮処理中の表示 */}
+        {isCompressing && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500" />
+              <span className="text-sm">ファイルを圧縮中...</span>
+            </div>
+            <Progress value={undefined} className="w-full" />
+          </div>
+        )}
+
+        {/* 圧縮情報の表示 */}
+        {compressionInfo && (
+          <Alert>
+            <CheckCircle className="h-4 w-4" />
+            <AlertDescription className="text-sm text-green-700">
+              {compressionInfo}
+            </AlertDescription>
+          </Alert>
         )}
 
         {/* 選択されたファイル情報 */}
@@ -200,6 +264,11 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
                 <div>
                   <p className="font-medium text-gray-800">{file.name}</p>
                   <p className="text-sm text-gray-500">{formatFileSize(file.size)}</p>
+                  {originalFile && originalFile.size !== file.size && (
+                    <p className="text-xs text-green-600 mt-1">
+                      🗜️ 圧縮済み (元: {formatFileSize(originalFile.size)})
+                    </p>
+                  )}
                   {file.size > COMPRESSION_THRESHOLD && (
                     <p className="text-xs text-blue-600 mt-1">
                       💡 大きなファイルのため、自動圧縮して処理します
@@ -252,11 +321,16 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
         )}
 
         {/* アップロードボタン */}
-        <Button onClick={uploadFile} disabled={!file || isUploading} className="w-full">
+        <Button onClick={uploadFile} disabled={!file || isUploading || isCompressing} className="w-full">
           {isUploading ? (
             <>
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
               処理中...
+            </>
+          ) : isCompressing ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+              圧縮中...
             </>
           ) : (
             <>
@@ -275,7 +349,8 @@ export default function FileUploadForm({ onTranscriptionComplete }: FileUploadFo
               <li>日本語の音声に最適化されています</li>
               <li>処理時間はファイルサイズによって異なります</li>
               <li>アップロードされたファイルは処理後に自動削除されます</li>
-              <li><strong>4MB以上のファイル:</strong> Audacity等で圧縮してください（64kbps MP3推奨）</li>
+              <li><strong>自動圧縮:</strong> 4MB以上のファイルは自動的に圧縮されます</li>
+              <li><strong>最大50MB:</strong> 入力ファイルは最大50MBまで対応</li>
             </ul>
           </AlertDescription>
         </Alert>
