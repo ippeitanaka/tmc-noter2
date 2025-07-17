@@ -1,139 +1,121 @@
-import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabase-client"
-import { createServerAdminClient } from "@/lib/supabase-server"
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { cookies } from "next/headers";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const cookieStore = cookies();
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
+  const clientTest: { success: boolean; error: string | null; data: any } = {
+    success: false,
+    error: null,
+    data: null,
+  };
+
   try {
-    console.log("=== Supabase接続テスト開始 ===")
-
-    const envCheck = {
-      NEXT_PUBLIC_SUPABASE_URL: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      url: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) + "...",
-    }
-
-    console.log("環境変数チェック:", envCheck)
-
-    // 1. クライアント接続テスト
-    const clientTest = { success: false, error: null, data: null }
-    try {
-      const { data, error } = await supabase.from("audio_files").select("count", { count: "exact" }).limit(0)
-      if (error) {
-        clientTest.error = error.message
-      } else {
-        clientTest.success = true
-        clientTest.data = data
-      }
-    } catch (error) {
-      clientTest.error = error instanceof Error ? error.message : String(error)
-    }
-
-    // 2. 管理者接続テスト
-    const adminTest = { success: false, error: null, data: null }
-    try {
-      const adminClient = createServerAdminClient()
-      const { data, error } = await adminClient.from("audio_files").select("count", { count: "exact" }).limit(0)
-      if (error) {
-        adminTest.error = error.message
-      } else {
-        adminTest.success = true
-        adminTest.data = data
-      }
-    } catch (error) {
-      adminTest.error = error instanceof Error ? error.message : String(error)
-    }
-
-    // 3. ストレージバケットテスト
-    const storageTest = { success: false, error: null, buckets: [] }
-    try {
-      const { data: buckets, error } = await supabase.storage.listBuckets()
-      if (error) {
-        storageTest.error = error.message
-      } else {
-        storageTest.success = true
-        storageTest.buckets = buckets?.map((b) => b.name) || []
-      }
-    } catch (error) {
-      storageTest.error = error instanceof Error ? error.message : String(error)
-    }
-
-    // 4. テストデータの挿入
-    const insertTest = { success: false, error: null, data: null }
-    try {
-      const testRecord = {
-        file_path: `test/${Date.now()}-test.mp3`,
-        file_name: "test-file.mp3",
-        transcript: "これはテストの文字起こしです。",
-        minutes: {
-          meetingName: "テスト会議",
-          date: new Date().toLocaleDateString(),
-          participants: "テストユーザー",
-          agenda: "テスト議題",
-          mainPoints: ["テストポイント1", "テストポイント2"],
-          decisions: "テスト決定事項",
-          todos: "テストTODO",
-        },
-        created_at: new Date().toISOString(),
-      }
-
-      const { data, error } = await supabase.from("audio_files").insert([testRecord]).select()
-      if (error) {
-        insertTest.error = error.message
-      } else {
-        insertTest.success = true
-        insertTest.data = data
-      }
-    } catch (error) {
-      insertTest.error = error instanceof Error ? error.message : String(error)
-    }
-
-    return NextResponse.json({
-      success: true,
-      timestamp: new Date().toISOString(),
-      environment: envCheck,
-      tests: {
-        client: clientTest,
-        admin: adminTest,
-        storage: storageTest,
-        insert: insertTest,
-      },
-    })
-  } catch (error) {
-    console.error("Supabaseテストエラー:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        timestamp: new Date().toISOString(),
-      },
-      { status: 500 },
-    )
-  }
-}
-
-export async function DELETE() {
-  try {
-    const { data, error } = await supabase.from("audio_files").delete().like("file_path", "test/%")
+    const { data, error } = await supabase
+      .from("audio_files")
+      .select("count", { count: "exact" })
+      .limit(0);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      clientTest.error = error.message;
+    } else {
+      clientTest.success = true;
+      clientTest.data = data;
     }
-
-    const deletedCount = Array.isArray(data) ? (data as unknown[]).length : 0
-
-    return NextResponse.json({
-      success: true,
-      message: "テストデータを削除しました",
-      deletedCount,
-    })
-  } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    )
+  } catch (err: any) {
+    clientTest.error = err.message || "Unknown client-side error";
   }
+
+  const adminTest: { success: boolean; error: string | null; data: any } = {
+    success: false,
+    error: null,
+    data: null,
+  };
+
+  try {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/audio_files?limit=0`,
+      {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+        },
+      }
+    );
+
+    if (!res.ok) throw new Error(`Response not ok: ${res.status}`);
+    const data = await res.json();
+    adminTest.success = true;
+    adminTest.data = data;
+  } catch (err: any) {
+    adminTest.error = err.message || "Unknown admin-side error";
+  }
+
+  const storageTest: { success: boolean; error: string | null; data: any } = {
+    success: false,
+    error: null,
+    data: null,
+  };
+
+  try {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/bucket`,
+      {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+        },
+      }
+    );
+
+    if (!res.ok) throw new Error(`Response not ok: ${res.status}`);
+    const data = await res.json();
+    storageTest.success = true;
+    storageTest.data = data;
+  } catch (err: any) {
+    storageTest.error = err.message || "Unknown storage error";
+  }
+
+  const insertTest: { success: boolean; error: string | null; data: any } = {
+    success: false,
+    error: null,
+    data: null,
+  };
+
+  try {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/test_table`,
+      {
+        method: "POST",
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({ message: "ok" }),
+      }
+    );
+
+    if (!res.ok) throw new Error(`Response not ok: ${res.status}`);
+    const data = await res.json();
+    insertTest.success = true;
+    insertTest.data = data;
+  } catch (err: any) {
+    insertTest.error = err.message || "Unknown insert error";
+  }
+
+  return NextResponse.json({
+    clientTest,
+    adminTest,
+    storageTest,
+    insertTest,
+  });
 }
