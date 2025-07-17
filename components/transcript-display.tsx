@@ -325,68 +325,130 @@ export default function TranscriptDisplay({
       console.log("Regenerating minutes with model:", aiConfig.provider)
       console.log("Enhanced transcript length:", enhancedTranscript.length)
 
-      // サーバーサイドAPIを呼び出す
-      const response = await fetch("/api/generate-minutes-with-ai", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          transcript: enhancedTranscript,
-          model: aiConfig.provider,
-        }),
-      })
+      // サーバーサイドAPIを呼び出す（タイムアウト設定付き）
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 120000) // 2分のタイムアウト
+      
+      try {
+        const response = await fetch("/api/generate-minutes-with-ai", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            transcript: enhancedTranscript,
+            model: aiConfig.provider,
+          }),
+          signal: controller.signal,
+        })
+        
+        clearTimeout(timeoutId)
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(
-          `API error: ${response.status} ${response.statusText} - ${
-            errorData.error || "Unknown error"
-          } ${errorData.details || ""}`,
-        )
-      }
+        console.log("API response status:", response.status)
+        console.log("API response headers:", Object.fromEntries(response.headers.entries()))
 
-      const data = await response.json()
-      const newMinutes = data.minutes
-      const usedModel = data.usedModel
-      const fallbackReason = data.fallbackReason
+        // レスポンステキストを取得
+        const responseText = await response.text()
+        console.log("API response text length:", responseText.length)
+        console.log("API response text preview:", responseText.substring(0, 500))
 
-      console.log("Regenerated minutes:", JSON.stringify(newMinutes).substring(0, 200) + "...")
-
-      // 使用されたモデルが要求したモデルと異なる場合は通知
-      if (usedModel && usedModel !== aiConfig.provider) {
-        let fallbackMessage = `${aiConfig.provider}モデルの代わりに${usedModel}を使用しました。`
-
-        if (fallbackReason === "RATE_LIMIT") {
-          fallbackMessage += "APIのレート制限に達したため、代替モデルを使用しました。"
-        } else if (fallbackReason === "API_KEY_MISSING") {
-          fallbackMessage += "APIキーが設定されていないため、代替モデルを使用しました。"
-        } else if (fallbackReason === "API_ERROR") {
-          fallbackMessage += "APIエラーが発生したため、代替モデルを使用しました。"
+        let data
+        try {
+          data = JSON.parse(responseText)
+        } catch (parseError) {
+          console.error("Failed to parse JSON response:", parseError)
+          console.error("Response text:", responseText)
+          throw new Error(`JSONレスポンスの解析に失敗しました: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
         }
 
-        toast({
-          title: "モデル変更通知",
-          description: fallbackMessage,
-          variant: "destructive",
-        })
-      } else {
-        toast({
-          title: "再生成完了",
-          description: "議事録が再生成されました。",
-        })
-      }
+        if (!response.ok) {
+          throw new Error(
+            `API error: ${response.status} ${response.statusText} - ${
+              data.error || "Unknown error"
+            } ${data.details || ""}`,
+          )
+        }
+        
+        const newMinutes = data.minutes
+        const usedModel = data.usedModel
+        const fallbackReason = data.fallbackReason
 
-      // 親コンポーネントに新しい議事録を渡す
-      if (onRegenerateMinutes) {
-        onRegenerateMinutes(newMinutes)
+        console.log("Regenerated minutes:", JSON.stringify(newMinutes).substring(0, 200) + "...")
+
+        // 使用されたモデルが要求したモデルと異なる場合は通知
+        if (usedModel && usedModel !== aiConfig.provider) {
+          let fallbackMessage = `${aiConfig.provider}モデルの代わりに${usedModel}を使用しました。`
+
+          if (fallbackReason === "RATE_LIMIT") {
+            fallbackMessage += "APIのレート制限に達したため、代替モデルを使用しました。"
+          } else if (fallbackReason === "API_KEY_MISSING") {
+            fallbackMessage += "APIキーが設定されていないため、代替モデルを使用しました。"
+          } else if (fallbackReason === "API_ERROR") {
+            fallbackMessage += "APIエラーが発生したため、代替モデルを使用しました。"
+          }
+
+          toast({
+            title: "モデル変更通知",
+            description: fallbackMessage,
+            variant: "destructive",
+          })
+        } else {
+          toast({
+            title: "再生成完了",
+            description: "議事録が再生成されました。",
+          })
+        }
+
+        // 親コンポーネントに新しい議事録を渡す
+        if (onRegenerateMinutes) {
+          onRegenerateMinutes(newMinutes)
+        }
+      } catch (fetchError) {
+        clearTimeout(timeoutId)
+        
+        // AbortErrorの場合はタイムアウトメッセージ
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error("議事録生成がタイムアウトしました（2分経過）。文字起こしが長すぎる可能性があります。")
+        }
+        
+        throw fetchError
       }
     } catch (error) {
       console.error("Regeneration error:", error)
+      
+      let errorMessage = "議事録の再生成中にエラーが発生しました"
+      let errorDetails = ""
+      
+      if (error instanceof Error) {
+        console.error("Error details:", {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        })
+        
+        // 特定のエラータイプに応じたメッセージ
+        if (error.message.includes("Failed to fetch")) {
+          errorMessage = "ネットワークエラーが発生しました"
+          errorDetails = "インターネット接続を確認してください"
+        } else if (error.message.includes("JSON")) {
+          errorMessage = "サーバーレスポンスの解析に失敗しました"
+          errorDetails = "しばらく時間をおいて再試行してください"
+        } else if (error.message.includes("429")) {
+          errorMessage = "APIのレート制限に達しました"
+          errorDetails = "しばらく時間をおいて再試行してください"
+        } else if (error.message.includes("500")) {
+          errorMessage = "サーバー内部エラーが発生しました"
+          errorDetails = "しばらく時間をおいて再試行してください"
+        } else {
+          errorDetails = error.message
+        }
+      }
+      
       toast({
         title: "エラー",
-        description: error instanceof Error ? error.message : "議事録の再生成中にエラーが発生しました",
+        description: `${errorMessage}${errorDetails ? `: ${errorDetails}` : ""}`,
         variant: "destructive",
+        duration: 8000, // より長い時間表示
       })
     } finally {
       setIsRegenerating(false)

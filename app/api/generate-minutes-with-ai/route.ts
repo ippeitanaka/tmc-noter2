@@ -27,142 +27,229 @@ const USER_SPECIFIED_PROMPT = `あなたは会議の内容を正確かつ簡潔�
 
 export async function POST(req: Request) {
   try {
-    const { transcript, model } = await req.json()
+    console.log("[SERVER] Minutes generation request received")
+    
+    // リクエストボディの安全な解析
+    let requestData
+    try {
+      const body = await req.text()
+      console.log("[SERVER] Request body length:", body.length)
+      requestData = JSON.parse(body)
+    } catch (parseError) {
+      console.error("[SERVER] Failed to parse request body:", parseError)
+      return NextResponse.json(
+        { 
+          error: "リクエストデータの解析に失敗しました",
+          details: parseError instanceof Error ? parseError.message : String(parseError)
+        }, 
+        { status: 400 }
+      )
+    }
+
+    const { transcript, model } = requestData
 
     if (!transcript) {
+      console.warn("[SERVER] No transcript provided")
       return NextResponse.json({ error: "文字起こしデータがありません" }, { status: 400 })
     }
 
-    console.log(`[SERVER] Generating minutes using ${model} model`)
+    if (!model) {
+      console.warn("[SERVER] No model specified, defaulting to gemini")
+    }
+
+    console.log(`[SERVER] Generating minutes using ${model || 'gemini'} model`)
     console.log(`[SERVER] Transcript length: ${transcript.length} characters`)
 
     let minutes
-    let usedModel = model
+    let usedModel = model || "gemini"
     let fallbackReason = null
 
-    // モデルに基づいて適切なAPIを使用
-    if (model === "gemini") {
-      // Gemini APIキーが設定されているか確認
-      if (!process.env.GEMINI_API_KEY) {
-        console.warn("[SERVER] Gemini API key is not set, checking if other models are available")
-        fallbackReason = "API_KEY_MISSING"
+    // APIキーの事前チェック
+    const hasGeminiKey = !!process.env.GEMINI_API_KEY
+    const hasDeepSeekKey = !!process.env.DEEPSEEK_API_KEY
+    
+    console.log("[SERVER] API Keys available:", { gemini: hasGeminiKey, deepseek: hasDeepSeekKey })
 
-        // Geminiが使えない場合はDeepSeekを試す
-        if (process.env.DEEPSEEK_API_KEY) {
-          console.log("[SERVER] Falling back to DeepSeek API")
-          usedModel = "deepseek"
-          minutes = await generateMinutesWithDeepSeek(transcript, USER_SPECIFIED_PROMPT)
-        } else {
-          // どれも使えない場合はルールベースにフォールバック
-          console.log("[SERVER] Falling back to rule-based generation")
-          usedModel = "rule-based"
-          minutes = generateMinutesRuleBased(transcript)
-        }
-      } else {
-        try {
-          // Gemini APIを使用
-          console.log("[SERVER] Using Gemini API for minutes generation")
-          minutes = await generateMinutesWithGemini(transcript, USER_SPECIFIED_PROMPT)
-        } catch (error) {
-          console.error("[SERVER] Gemini minutes generation failed:", error)
-          fallbackReason = "API_ERROR"
-
-          // エラーメッセージからレート制限を検出
-          const errorMsg = error instanceof Error ? error.message : String(error)
-          if (errorMsg.includes("429") || errorMsg.includes("rate limit") || errorMsg.includes("quota")) {
-            fallbackReason = "RATE_LIMIT"
-          }
-
-          // Geminiが失敗した場合はDeepSeekを試す
-          if (process.env.DEEPSEEK_API_KEY) {
-            console.log("[SERVER] Falling back to DeepSeek API due to Gemini error")
-            try {
-              usedModel = "deepseek"
-              minutes = await generateMinutesWithDeepSeek(transcript, USER_SPECIFIED_PROMPT)
-            } catch (deepseekError) {
-              console.error("[SERVER] DeepSeek fallback failed:", deepseekError)
-              // DeepSeekも失敗した場合はルールベースにフォールバック
-              console.log("[SERVER] Falling back to rule-based generation")
-              usedModel = "rule-based"
-              minutes = generateMinutesRuleBased(transcript)
-            }
-          } else {
-            // どれも使えない場合はルールベースにフォールバック
-            console.log("[SERVER] Falling back to rule-based generation")
-            usedModel = "rule-based"
-            minutes = generateMinutesRuleBased(transcript)
-          }
-        }
-      }
-    } else if (model === "deepseek") {
-      // DeepSeek APIキーが設定されているか確認
-      if (!process.env.DEEPSEEK_API_KEY) {
-        console.warn("[SERVER] DeepSeek API key is not set, checking if other models are available")
-        fallbackReason = "API_KEY_MISSING"
-
-        // DeepSeekが使えない場合はGeminiを試す
-        if (process.env.GEMINI_API_KEY) {
-          console.log("[SERVER] Falling back to Gemini API")
-          usedModel = "gemini"
-          minutes = await generateMinutesWithGemini(transcript, USER_SPECIFIED_PROMPT)
-        } else {
-          // どれも使えない場合はルールベースにフォールバック
-          console.log("[SERVER] Falling back to rule-based generation")
-          usedModel = "rule-based"
-          minutes = generateMinutesRuleBased(transcript)
-        }
-      } else {
-        try {
-          // DeepSeek APIを使用
-          console.log("[SERVER] Using DeepSeek API for minutes generation")
-          minutes = await generateMinutesWithDeepSeek(transcript, USER_SPECIFIED_PROMPT)
-        } catch (error) {
-          console.error("[SERVER] DeepSeek minutes generation failed:", error)
-          fallbackReason = "API_ERROR"
-
-          // DeepSeekが失敗した場合はGeminiを試す
-          if (process.env.GEMINI_API_KEY) {
-            console.log("[SERVER] Falling back to Gemini API due to DeepSeek error")
-            try {
-              usedModel = "gemini"
-              minutes = await generateMinutesWithGemini(transcript, USER_SPECIFIED_PROMPT)
-            } catch (geminiError) {
-              console.error("[SERVER] Gemini fallback failed:", geminiError)
-              // Geminiも失敗した場合はルールベースにフォールバック
-              console.log("[SERVER] Falling back to rule-based generation")
-              usedModel = "rule-based"
-              minutes = generateMinutesRuleBased(transcript)
-            }
-          } else {
-            // どれも使えない場合はルールベースにフォールバック
-            console.log("[SERVER] Falling back to rule-based generation")
-            usedModel = "rule-based"
-            minutes = generateMinutesRuleBased(transcript)
-          }
-        }
-      }
-    } else {
-      // 未知のモデルの場合はルールベースを使用
-      console.warn(`[SERVER] Unknown model: ${model}, using rule-based generation`)
+    // どのAPIキーも利用できない場合は早期にルールベースへ
+    if (!hasGeminiKey && !hasDeepSeekKey) {
+      console.warn("[SERVER] No API keys available, using rule-based generation")
       usedModel = "rule-based"
       minutes = generateMinutesRuleBased(transcript)
+      fallbackReason = "NO_API_KEYS"
+    } else {
+      try {
+        // モデルに基づいて適切なAPIを使用
+        if (usedModel === "gemini") {
+          // Gemini APIキーが設定されているか確認
+          if (!hasGeminiKey) {
+            console.warn("[SERVER] Gemini API key is not set, checking if other models are available")
+            fallbackReason = "API_KEY_MISSING"
+
+            // Geminiが使えない場合はDeepSeekを試す
+            if (hasDeepSeekKey) {
+              console.log("[SERVER] Falling back to DeepSeek API")
+              usedModel = "deepseek"
+              minutes = await generateMinutesWithDeepSeek(transcript, USER_SPECIFIED_PROMPT)
+            } else {
+              // どれも使えない場合はルールベースにフォールバック
+              console.log("[SERVER] Falling back to rule-based generation")
+              usedModel = "rule-based"
+              minutes = generateMinutesRuleBased(transcript)
+            }
+          } else {
+            try {
+              // Gemini APIを使用
+              console.log("[SERVER] Using Gemini API for minutes generation")
+              minutes = await generateMinutesWithGemini(transcript, USER_SPECIFIED_PROMPT)
+            } catch (error) {
+              console.error("[SERVER] Gemini minutes generation failed:", error)
+              fallbackReason = "API_ERROR"
+
+              // エラーメッセージからレート制限を検出
+              const errorMsg = error instanceof Error ? error.message : String(error)
+              if (errorMsg.includes("429") || errorMsg.includes("rate limit") || errorMsg.includes("quota")) {
+                fallbackReason = "RATE_LIMIT"
+              }
+
+              // Geminiが失敗した場合はDeepSeekを試す
+              if (hasDeepSeekKey) {
+                console.log("[SERVER] Falling back to DeepSeek API due to Gemini error")
+                try {
+                  usedModel = "deepseek"
+                  minutes = await generateMinutesWithDeepSeek(transcript, USER_SPECIFIED_PROMPT)
+                } catch (deepseekError) {
+                  console.error("[SERVER] DeepSeek fallback failed:", deepseekError)
+                  // DeepSeekも失敗した場合はルールベースにフォールバック
+                  console.log("[SERVER] Falling back to rule-based generation")
+                  usedModel = "rule-based"
+                  minutes = generateMinutesRuleBased(transcript)
+                }
+              } else {
+                // どれも使えない場合はルールベースにフォールバック
+                console.log("[SERVER] Falling back to rule-based generation")
+                usedModel = "rule-based"
+                minutes = generateMinutesRuleBased(transcript)
+              }
+            }
+          }
+        } else if (usedModel === "deepseek") {
+          // DeepSeek APIキーが設定されているか確認
+          if (!hasDeepSeekKey) {
+            console.warn("[SERVER] DeepSeek API key is not set, checking if other models are available")
+            fallbackReason = "API_KEY_MISSING"
+
+            // DeepSeekが使えない場合はGeminiを試す
+            if (hasGeminiKey) {
+              console.log("[SERVER] Falling back to Gemini API")
+              usedModel = "gemini"
+              minutes = await generateMinutesWithGemini(transcript, USER_SPECIFIED_PROMPT)
+            } else {
+              // どれも使えない場合はルールベースにフォールバック
+              console.log("[SERVER] Falling back to rule-based generation")
+              usedModel = "rule-based"
+              minutes = generateMinutesRuleBased(transcript)
+            }
+          } else {
+            try {
+              // DeepSeek APIを使用
+              console.log("[SERVER] Using DeepSeek API for minutes generation")
+              minutes = await generateMinutesWithDeepSeek(transcript, USER_SPECIFIED_PROMPT)
+            } catch (error) {
+              console.error("[SERVER] DeepSeek minutes generation failed:", error)
+              fallbackReason = "API_ERROR"
+
+              // DeepSeekが失敗した場合はGeminiを試す
+              if (hasGeminiKey) {
+                console.log("[SERVER] Falling back to Gemini API due to DeepSeek error")
+                try {
+                  usedModel = "gemini"
+                  minutes = await generateMinutesWithGemini(transcript, USER_SPECIFIED_PROMPT)
+                } catch (geminiError) {
+                  console.error("[SERVER] Gemini fallback failed:", geminiError)
+                  // Geminiも失敗した場合はルールベースにフォールバック
+                  console.log("[SERVER] Falling back to rule-based generation")
+                  usedModel = "rule-based"
+                  minutes = generateMinutesRuleBased(transcript)
+                }
+              } else {
+                // どれも使えない場合はルールベースにフォールバック
+                console.log("[SERVER] Falling back to rule-based generation")
+                usedModel = "rule-based"
+                minutes = generateMinutesRuleBased(transcript)
+              }
+            }
+          }
+        } else {
+          // 未知のモデルの場合はルールベースを使用
+          console.warn(`[SERVER] Unknown model: ${usedModel}, using rule-based generation`)
+          usedModel = "rule-based"
+          minutes = generateMinutesRuleBased(transcript)
+        }
+      } catch (outerError) {
+        console.error("[SERVER] Outer try-catch error:", outerError)
+        // 最終的なフォールバック
+        usedModel = "rule-based"
+        minutes = generateMinutesRuleBased(transcript)
+        fallbackReason = "UNEXPECTED_ERROR"
+      }
+    }    // 結果の検証
+    if (!minutes) {
+      console.error("[SERVER] Minutes generation returned null or undefined")
+      return NextResponse.json(
+        {
+          error: "議事録の生成に失敗しました",
+          details: "生成結果が空です",
+          usedModel: "rule-based",
+          fallbackReason: "GENERATION_FAILED",
+        },
+        { status: 500 }
+      )
     }
 
-    console.log("[SERVER] Minutes generation completed")
-    return NextResponse.json({
+    console.log("[SERVER] Minutes generation completed successfully")
+    console.log("[SERVER] Used model:", usedModel)
+    
+    const response = {
       minutes,
       usedModel,
-      requestedModel: model,
+      requestedModel: model || "gemini",
       fallbackReason,
-    })
+      timestamp: new Date().toISOString(),
+    }
+    
+    // レスポンスが有効なJSONであることを確認
+    try {
+      JSON.stringify(response)
+    } catch (jsonError) {
+      console.error("[SERVER] Failed to serialize response:", jsonError)
+      return NextResponse.json(
+        {
+          error: "レスポンスの生成に失敗しました",
+          details: "JSONシリアライゼーションエラー",
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json(response)
   } catch (error) {
     console.error("[SERVER] Minutes generation error:", error)
-    return NextResponse.json(
-      {
-        error: "議事録の生成中にエラーが発生しました",
-        details: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    )
+    
+    // エラーの詳細ログ
+    if (error instanceof Error) {
+      console.error("[SERVER] Error name:", error.name)
+      console.error("[SERVER] Error message:", error.message)
+      console.error("[SERVER] Error stack:", error.stack)
+    }
+    
+    // 安全なエラーレスポンス
+    const errorResponse = {
+      error: "議事録の生成中にエラーが発生しました",
+      details: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+      fallbackMessage: "しばらく時間をおいて再試行してください。問題が続く場合はルールベース生成をお試しください。",
+    }
+    
+    return NextResponse.json(errorResponse, { status: 500 })
   }
 }
