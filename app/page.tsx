@@ -24,7 +24,6 @@ import { Footer } from "@/components/footer"
 import { useRecording } from "@/contexts/recording-context"
 import { useApiConfig } from "@/contexts/api-config-context"
 import { useAiConfig } from "@/contexts/ai-config-context"
-import EnvStatusDisplay from "@/components/env-status-display"
 
 export default function Home() {
   const { transcript: recordingTranscript, audioBlob } = useRecording()
@@ -162,9 +161,6 @@ export default function Home() {
               />
             </div>
           )}
-          
-          {/* 環境変数設定状況の表示 */}
-          <EnvStatusDisplay />
         </div>
         
         <Tabs defaultValue="upload" className="mt-8">

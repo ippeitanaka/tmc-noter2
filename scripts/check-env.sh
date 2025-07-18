@@ -43,14 +43,11 @@ fi
 echo "✅ プロジェクトが見つかりました"
 echo ""
 
-# 必要な環境変数のリスト
+# 必要な環境変数のリスト（AI APIキーのみ）
 REQUIRED_VARS=(
     "OPENAI_API_KEY"
     "GEMINI_API_KEY"
     "DEEPSEEK_API_KEY"
-    "NEXT_PUBLIC_SUPABASE_URL"
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY"
-    "SUPABASE_SERVICE_ROLE_KEY"
 )
 
 # AI APIキー（少なくとも1つ必要）

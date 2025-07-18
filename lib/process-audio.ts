@@ -1,4 +1,3 @@
-import { supabase, STORAGE_BUCKET } from "@/lib/supabase-client"
 import { processAudioWithFFmpeg } from "@/lib/ffmpeg-helper"
 
 // ファイル名を安全な形式に変換する関数
@@ -66,45 +65,6 @@ const prepareAudioFile = async (file: File): Promise<File> => {
   }
 
   return file
-}
-
-// Supabaseにファイルをアップロード
-const uploadToSupabase = async (
-  file: File,
-  onProgress?: (progress: number) => void,
-): Promise<{ url: string; path: string }> => {
-  try {
-    // ファイル名を安全な形式に変換
-    const safeName = sanitizeFileName(file.name)
-    const fileName = `audio/${Date.now()}-${safeName}`
-
-    console.log(`Uploading file to bucket: ${STORAGE_BUCKET}, path: ${fileName}, type: ${file.type}`)
-
-    const { data, error } = await supabase.storage.from(STORAGE_BUCKET).upload(fileName, file, {
-      cacheControl: "3600",
-      upsert: true, // 同名ファイルが存在する場合は上書き
-      contentType: file.type, // MIMEタイプを明示的に設定
-    })
-
-    if (error) {
-      console.error("Upload error details:", error)
-      throw new Error(`ファイルのアップロードに失敗しました: ${error.message}`)
-    }
-
-    // ファイルの公開URLを取得
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fileName)
-
-    console.log(`File uploaded successfully. Public URL: ${publicUrl}`)
-    return {
-      url: publicUrl,
-      path: fileName,
-    }
-  } catch (error) {
-    console.error("Upload function error:", error)
-    throw error
-  }
 }
 
 // 音声ファイルを文字起こし（OpenAI APIを直接使用）
@@ -277,7 +237,6 @@ ${transcript}`
 export async function processAudioFile(
   file: File,
   callbacks: {
-    onUploadProgress?: (progress: number) => void
     onTranscribeStart?: () => void
     onTranscribeProgress?: (progress: number) => void
     onSummarizeStart?: () => void
@@ -290,17 +249,6 @@ export async function processAudioFile(
     // ファイルの準備（必要に応じて圧縮・変換）
     const preparedFile = await prepareAudioFile(file)
     console.log(`File prepared: ${preparedFile.name}, size: ${preparedFile.size} bytes, type: ${preparedFile.type}`)
-
-    // Supabaseにアップロード（オプション - エラーが発生しても処理を続行）
-    let filePath = ""
-    try {
-      const uploadResult = await uploadToSupabase(preparedFile, callbacks.onUploadProgress)
-      filePath = uploadResult.path
-      console.log("File uploaded to Supabase successfully")
-    } catch (uploadError) {
-      console.warn("Supabase upload failed, continuing without storage:", uploadError)
-      // アップロードに失敗してもローカル処理は続行
-    }
 
     // 文字起こし開始
     if (callbacks.onTranscribeStart) callbacks.onTranscribeStart()
@@ -319,37 +267,9 @@ export async function processAudioFile(
     console.log("Minutes generation completed")
     if (callbacks.onSummarizeProgress) callbacks.onSummarizeProgress(100)
 
-    // Supabaseにデータを保存（オプション - エラーが発生しても処理を続行）
-    let recordId = null
-    try {
-      const { data: recordData, error: recordError } = await supabase
-        .from("audio_files")
-        .insert([
-          {
-            file_path: filePath || `local/${Date.now()}-${file.name}`,
-            file_name: file.name,
-            transcript: transcript,
-            minutes: minutes,
-            created_at: new Date().toISOString(),
-          },
-        ])
-        .select()
-
-      if (recordError) {
-        console.warn("Failed to save record to database:", recordError)
-      } else {
-        recordId = recordData && recordData.length > 0 ? recordData[0].id : null
-        console.log("Record saved to database successfully")
-      }
-    } catch (dbError) {
-      console.warn("Database save failed, continuing without persistence:", dbError)
-    }
-
     return {
       transcript,
       minutes,
-      filePath,
-      recordId,
     }
   } catch (error) {
     console.error("Error processing audio file:", error)
@@ -357,40 +277,3 @@ export async function processAudioFile(
   }
 }
 
-// ファイルとデータを削除する関数
-export async function deleteAudioFile(filePath: string, recordId?: number) {
-  try {
-    console.log(`Deleting file: ${filePath}, record ID: ${recordId}`)
-
-    // Supabaseからファイルを削除
-    if (filePath && !filePath.startsWith("local/")) {
-      try {
-        const { error: deleteFileError } = await supabase.storage.from(STORAGE_BUCKET).remove([filePath])
-
-        if (deleteFileError) {
-          console.warn("Failed to delete file from storage:", deleteFileError)
-        }
-      } catch (error) {
-        console.warn("Storage deletion failed:", error)
-      }
-    }
-
-    // レコードIDが指定されている場合、データベースからレコードを削除
-    if (recordId) {
-      try {
-        const { error: deleteRecordError } = await supabase.from("audio_files").delete().eq("id", recordId)
-
-        if (deleteRecordError) {
-          console.warn("Failed to delete record from database:", deleteRecordError)
-        }
-      } catch (error) {
-        console.warn("Database deletion failed:", error)
-      }
-    }
-
-    return { success: true }
-  } catch (error) {
-    console.error("Delete function error:", error)
-    throw error
-  }
-}

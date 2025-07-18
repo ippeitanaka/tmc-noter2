@@ -81,17 +81,18 @@ export async function GET() {
         missingKeys: [
           !openaiApiKey && 'OPENAI_API_KEY',
           !geminiApiKey && 'GEMINI_API_KEY', 
-          !deepseekApiKey && 'DEEPSEEK_API_KEY',
-          !supabaseUrl && 'NEXT_PUBLIC_SUPABASE_URL',
-          !supabaseAnonKey && 'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-          !supabaseServiceKey && 'SUPABASE_SERVICE_ROLE_KEY'
+          !deepseekApiKey && 'DEEPSEEK_API_KEY'
+          // Supabase環境変数をオプション扱いに変更
+          // !supabaseUrl && 'NEXT_PUBLIC_SUPABASE_URL',
+          // !supabaseAnonKey && 'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+          // !supabaseServiceKey && 'SUPABASE_SERVICE_ROLE_KEY'
         ].filter(Boolean),
         
         setupNeeded: !openaiApiKey && !geminiApiKey && !deepseekApiKey,
         
         priority: (() => {
           if (!openaiApiKey && !geminiApiKey && !deepseekApiKey) return 'critical'
-          if (!supabaseUrl || !supabaseAnonKey) return 'high'
+          // Supabaseは優先度を下げる
           return 'low'
         })()
       }

@@ -260,28 +260,8 @@ export default function TranscriptDisplay({
     try {
       setIsDeleting(true)
 
-      // Supabaseからの削除処理（APIがある場合）
+      // ローカルストレージからデータを削除
       if (recordId) {
-        try {
-          // APIを使用して削除
-          const response = await fetch("/api/delete-audio", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ recordId }),
-          })
-
-          if (!response.ok) {
-            const errorData = await response.json()
-            console.error("Delete API error:", errorData)
-            // APIエラーでも続行（ローカルからは削除する）
-          }
-        } catch (error) {
-          console.error("Delete API error:", error)
-        }
-
-        // ローカルストレージからも削除
         deleteRecord(recordId)
       }
 
