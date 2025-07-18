@@ -198,6 +198,12 @@ const RealtimeTranscription = () => {
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = "ja-JP"
+      
+      // 音声認識の品質向上設定
+      if ('grammars' in recognition) {
+        // 文法設定があれば日本語に最適化
+        recognition.grammars = null
+      }
 
       recognition.onstart = () => {
         console.log("音声認識開始:", new Date().toISOString())
@@ -248,34 +254,114 @@ const RealtimeTranscription = () => {
         let finalTranscript = ""
         let interimText = ""
 
+        // 結果の品質チェックを強化
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const result = event.results[i]
+          const transcript = result[0].transcript
+          const confidence = result[0].confidence || 1
+          
+          // 信頼度が低い結果や異常に短い/長い結果を除外
+          if (confidence < 0.3) {
+            console.log("低信頼度結果をスキップ:", transcript, "信頼度:", confidence)
+            continue
+          }
+          
+          if (transcript.trim().length < 1 || transcript.trim().length > 200) {
+            console.log("異常な長さの結果をスキップ:", transcript.length, "文字")
+            continue
+          }
+          
           if (result.isFinal) {
-            finalTranscript += result[0].transcript
+            finalTranscript += transcript
           } else {
-            interimText += result[0].transcript
+            interimText += transcript
           }
         }
 
         if (finalTranscript) {
-          // 重複チェック: 同じ内容が連続していないか確認
+          // 強化された重複チェック: 同じ内容が連続していないか確認
           setTranscript((prev) => {
             const trimmedNew = finalTranscript.trim()
             const trimmedPrev = prev.trim()
             
-            // 既に同じ内容が末尾にある場合は追加しない
+            // 1. 完全一致チェック: 既に同じ内容が末尾にある場合は追加しない
             if (trimmedPrev.endsWith(trimmedNew)) {
+              console.log("完全一致重複検出: スキップします", trimmedNew)
               return prev
             }
             
-            // 同じフレーズの重複を防ぐ - 直前の文と比較
-            const lastSentences = trimmedPrev.split(/[。．！？\n]/).slice(-2).join('')
-            const cleanNew = trimmedNew.replace(/[。．！？\s]/g, '')
-            const cleanLast = lastSentences.replace(/[。．！？\s]/g, '')
+            // 2. 短いフレーズの重複をより厳密にチェック
+            if (trimmedNew.length < 10) {
+              const lastWords = trimmedPrev.split(/\s+/).slice(-5).join(' ')
+              if (lastWords.includes(trimmedNew)) {
+                console.log("短いフレーズ重複検出: スキップします", trimmedNew)
+                return prev
+              }
+            }
             
-            if (cleanLast.includes(cleanNew) && cleanNew.length > 5) {
-              console.log("重複検出: スキップします", trimmedNew)
+            // 3. 同じフレーズの異常な反復を検出
+            const words = trimmedNew.split(/\s+/)
+            const prevWords = trimmedPrev.split(/\s+/).slice(-20) // 直近20単語
+            
+            // 同じ単語/フレーズが3回以上連続している場合をチェック
+            for (let i = 0; i < words.length; i++) {
+              const word = words[i]
+              if (word.length > 2) { // 短すぎる単語は除外
+                let consecutiveCount = 0
+                
+                // 新しいテキスト内での連続チェック
+                for (let j = i; j < words.length && words[j] === word; j++) {
+                  consecutiveCount++
+                }
+                
+                // 前のテキストとの連続チェック
+                for (let k = prevWords.length - 1; k >= 0 && prevWords[k] === word; k--) {
+                  consecutiveCount++
+                }
+                
+                if (consecutiveCount >= 3) {
+                  console.log("異常な反復検出: スキップします", trimmedNew, "単語:", word, "連続回数:", consecutiveCount)
+                  return prev
+                }
+              }
+            }
+            
+            // 4. 長いフレーズの重複を検出（従来のロジック強化）
+            const lastSentences = trimmedPrev.split(/[。．！？\n]/).slice(-3).join('')
+            const cleanNew = trimmedNew.replace(/[。．！？\s、]/g, '')
+            const cleanLast = lastSentences.replace(/[。．！？\s、]/g, '')
+            
+            if (cleanLast.includes(cleanNew) && cleanNew.length > 3) {
+              console.log("長いフレーズ重複検出: スキップします", trimmedNew)
               return prev
+            }
+            
+            // 5. 文字レベルでの類似度チェック（新機能）
+            if (trimmedNew.length > 5) {
+              const recent = trimmedPrev.slice(-100) // 直近100文字
+              let similarity = 0
+              const shorter = Math.min(recent.length, trimmedNew.length)
+              
+              for (let i = 0; i < shorter; i++) {
+                if (recent[recent.length - shorter + i] === trimmedNew[i]) {
+                  similarity++
+                }
+              }
+              
+              const similarityRatio = similarity / shorter
+              if (similarityRatio > 0.8 && shorter > 10) {
+                console.log("高類似度重複検出: スキップします", trimmedNew, "類似度:", similarityRatio)
+                return prev
+              }
+            }
+            
+            // 6. 異常に長い反復パターンの検出
+            if (trimmedNew.length > 50) {
+              const pattern = /(.{5,}?)\1{2,}/.exec(trimmedNew)
+              if (pattern) {
+                console.log("反復パターン検出: スキップします", trimmedNew)
+                return prev
+              }
             }
             
             return prev + finalTranscript
