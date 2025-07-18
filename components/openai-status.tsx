@@ -75,16 +75,19 @@ export default function OpenAIStatus() {
     }
   }
 
-  const testWhisperAPI = async () => {
+  const testWhisperAPI = async (apiKey?: string) => {
     try {
       setStatus("testing")
       setMessage("Whisper APIをテスト中...")
+
+      const requestBody = apiKey ? { apiKey } : {}
 
       const response = await fetch("/api/test-whisper", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        body: JSON.stringify(requestBody),
       })
 
       const result = await response.json()
@@ -106,6 +109,8 @@ export default function OpenAIStatus() {
       )
     }
   }
+
+  const handleTestWhisper = () => testWhisperAPI()
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -143,7 +148,7 @@ export default function OpenAIStatus() {
             {isRefreshing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
             再確認
           </Button>
-          <Button variant="outline" size="sm" onClick={testWhisperAPI}>
+          <Button variant="outline" size="sm" onClick={handleTestWhisper}>
             Whisperテスト
           </Button>
         </div>
@@ -185,7 +190,7 @@ export default function OpenAIStatus() {
           {isRefreshing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
           再試行
         </Button>
-        <Button variant="outline" size="sm" onClick={testWhisperAPI}>
+        <Button variant="outline" size="sm" onClick={handleTestWhisper}>
           Whisperテスト
         </Button>
       </div>

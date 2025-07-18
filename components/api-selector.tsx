@@ -181,22 +181,28 @@ export default function ApiSelector({ onConfigChange, currentConfig }: ApiSelect
     
     try {
       let endpoint = ''
+      let requestBody: any = {}
+      
       switch (selectedProvider) {
         case 'openai':
           endpoint = '/api/check-openai'
+          if (apiKey) requestBody.apiKey = apiKey
           break
         case 'assemblyai':
           endpoint = '/api/check-assemblyai'
+          if (apiKey) requestBody.apiKey = apiKey
           break
         case 'azure':
           endpoint = '/api/check-azure'
+          if (apiKey) requestBody.apiKey = apiKey
+          if (region) requestBody.region = region
           break
         case 'webspeech':
-          setTestResult('Web Speech APIは利用可能です')
+          setTestResult('✅ Web Speech APIは利用可能です')
           setIsChecking(false)
           return
         case 'offline':
-          setTestResult('オフライン機能は開発中です')
+          setTestResult('⚠️ オフライン機能は開発中です')
           setIsChecking(false)
           return
       }
@@ -206,10 +212,7 @@ export default function ApiSelector({ onConfigChange, currentConfig }: ApiSelect
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          apiKey: apiKey,
-          region: region
-        })
+        body: JSON.stringify(requestBody)
       })
       
       if (!response.ok) {

@@ -1,14 +1,31 @@
 import { NextResponse } from "next/server"
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     console.log("[TEST] Testing Whisper API with minimal audio...")
 
-    // OpenAI APIキーのチェック
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      return NextResponse.json({ error: "OpenAI APIキーが設定されていません" }, { status: 500 })
+    // リクエストボディからAPIキーを取得（オプション）
+    let userApiKey: string | undefined
+    try {
+      const body = await request.json()
+      userApiKey = body?.apiKey
+    } catch (error) {
+      // JSONパースエラーは無視（APIキーが提供されていない場合）
+      console.log("[TEST] No API key provided in request body, using environment variable")
     }
+
+    // APIキーの取得: ユーザー提供 > 環境変数
+    const apiKey = userApiKey || process.env.OPENAI_API_KEY
+    if (!apiKey) {
+      return NextResponse.json({ 
+        success: false,
+        error: userApiKey 
+          ? "提供されたAPIキーが空です" 
+          : "OpenAI APIキーが設定されていません。APIキーを入力するか、環境変数を設定してください。"
+      }, { status: 400 })
+    }
+
+    console.log("[TEST] Using API key source:", userApiKey ? "user-provided" : "environment")
 
     // 最小限のテスト用音声データ（無音の短いWAVファイル）
     // これは1秒間の無音WAVファイルのBase64エンコード
