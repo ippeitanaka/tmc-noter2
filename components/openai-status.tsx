@@ -23,10 +23,44 @@ export default function OpenAIStatus() {
         },
       })
 
-      const result = await response.json()
+      if (!response.ok) {
+        // エラーレスポンスの場合も安全に処理
+        let errorText = ""
+        try {
+          errorText = await response.text()
+        } catch (textError) {
+          console.error("Failed to read error response:", textError)
+          errorText = "Failed to read error response"
+        }
 
-      if (!response.ok || result.error) {
-        throw new Error(result.error || "OpenAI APIの接続に失敗しました")
+        let result
+        try {
+          result = JSON.parse(errorText)
+        } catch (parseError) {
+          console.error("Failed to parse error response JSON:", parseError)
+          throw new Error(`OpenAI API接続エラー (${response.status}): ${errorText.substring(0, 200)}`)
+        }
+
+        throw new Error(result.error || `OpenAI APIの接続に失敗しました (${response.status})`)
+      }
+
+      // 成功レスポンスの安全な処理
+      const responseText = await response.text()
+      if (!responseText) {
+        throw new Error("OpenAI APIから空のレスポンスが返されました")
+      }
+
+      let result
+      try {
+        result = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error("Failed to parse OpenAI response JSON:", parseError)
+        console.error("Response text:", responseText.substring(0, 500))
+        throw new Error(`OpenAI APIレスポンスの解析に失敗しました: ${parseError}`)
+      }
+
+      if (result.error) {
+        throw new Error(result.error)
       }
 
       setStatus("success")

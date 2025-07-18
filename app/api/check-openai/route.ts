@@ -47,6 +47,18 @@ export async function GET() {
       const responseText = await response.text()
       console.log("[CHECK] OpenAI API response text (first 200 chars):", responseText.substring(0, 200))
 
+      if (!responseText) {
+        console.error("[CHECK] OpenAI API returned empty response")
+        return NextResponse.json(
+          {
+            error: "OpenAI APIから空のレスポンスが返されました",
+            available: false,
+            details: "Empty response received",
+          },
+          { status: 500 },
+        )
+      }
+
       if (!response.ok) {
         let errorMessage = `API request failed with status ${response.status}`
 

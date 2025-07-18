@@ -30,10 +30,25 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
         try {
           const geminiResponse = await fetch("/api/check-gemini")
           console.log("Gemini check response status:", geminiResponse.status)
+          console.log("Gemini check response ok:", geminiResponse.ok)
           
           if (geminiResponse.ok) {
-            const responseText = await geminiResponse.text()
-            console.log("Gemini response text length:", responseText.length)
+            let responseText: string;
+            try {
+              responseText = await geminiResponse.text()
+              console.log("Gemini response text length:", responseText.length)
+            } catch (textError) {
+              console.error("Failed to read Gemini response text:", textError)
+              setGeminiAvailable(false)
+              return
+            }
+            
+            // 空レスポンスチェック
+            if (!responseText || responseText.trim() === '') {
+              console.error("Empty response from Gemini check API")
+              setGeminiAvailable(false)
+              return
+            }
             
             try {
               const data = JSON.parse(responseText)
@@ -58,12 +73,18 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
               )
             } catch (parseError) {
               console.error("Failed to parse Gemini response JSON:", parseError)
-              console.error("Response text:", responseText)
+              console.error("Response text:", responseText.substring(0, 500))
               setGeminiAvailable(false)
             }
           } else {
-            const errorText = await geminiResponse.text()
-            console.error("Failed to check Gemini API:", geminiResponse.status, errorText)
+            let errorText = "";
+            try {
+              errorText = await geminiResponse.text()
+            } catch (textError) {
+              console.error("Failed to read Gemini error response:", textError)
+              errorText = "Failed to read error response"
+            }
+            console.error("Failed to check Gemini API:", geminiResponse.status, errorText.substring(0, 200))
             setGeminiAvailable(false)
           }
         } catch (fetchError) {
@@ -75,9 +96,25 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
         try {
           const deepseekResponse = await fetch("/api/check-deepseek")
           console.log("DeepSeek check response status:", deepseekResponse.status)
+          console.log("DeepSeek check response ok:", deepseekResponse.ok)
           
           if (deepseekResponse.ok) {
-            const responseText = await deepseekResponse.text()
+            let responseText: string;
+            try {
+              responseText = await deepseekResponse.text()
+              console.log("DeepSeek response text length:", responseText.length)
+            } catch (textError) {
+              console.error("Failed to read DeepSeek response text:", textError)
+              setDeepseekAvailable(false)
+              return
+            }
+
+            // 空レスポンスチェック
+            if (!responseText || responseText.trim() === '') {
+              console.error("Empty response from DeepSeek check API")
+              setDeepseekAvailable(false)
+              return
+            }
             console.log("DeepSeek response text length:", responseText.length)
             
             try {
@@ -86,12 +123,18 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
               console.log("DeepSeek API availability:", data.available)
             } catch (parseError) {
               console.error("Failed to parse DeepSeek response JSON:", parseError)
-              console.error("Response text:", responseText)
+              console.error("Response text:", responseText.substring(0, 500))
               setDeepseekAvailable(false)
             }
           } else {
-            const errorText = await deepseekResponse.text()
-            console.error("Failed to check DeepSeek API:", deepseekResponse.status, errorText)
+            let errorText = "";
+            try {
+              errorText = await deepseekResponse.text()
+            } catch (textError) {
+              console.error("Failed to read DeepSeek error response:", textError)
+              errorText = "Failed to read error response"
+            }
+            console.error("Failed to check DeepSeek API:", deepseekResponse.status, errorText.substring(0, 200))
             setDeepseekAvailable(false)
           }
         } catch (fetchError) {

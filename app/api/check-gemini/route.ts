@@ -54,11 +54,25 @@ export async function GET(req: Request) {
 
       if (!modelsResponse.ok) {
         let errorData = {}
+        let errorText = ""
+        
         try {
-          errorData = await modelsResponse.json()
-        } catch (parseError) {
-          console.error("[CHECK-GEMINI] Failed to parse error response:", parseError)
-          errorData = { parseError: "Failed to parse response as JSON" }
+          errorText = await modelsResponse.text()
+          console.log("[CHECK-GEMINI] Error response text:", errorText.substring(0, 200))
+          
+          if (errorText.trim()) {
+            try {
+              errorData = JSON.parse(errorText)
+            } catch (parseError) {
+              console.error("[CHECK-GEMINI] Failed to parse error response JSON:", parseError)
+              errorData = { parseError: "Failed to parse response as JSON", rawText: errorText.substring(0, 200) }
+            }
+          } else {
+            errorData = { error: "Empty response from server" }
+          }
+        } catch (textError) {
+          console.error("[CHECK-GEMINI] Failed to read error response text:", textError)
+          errorData = { textError: "Failed to read response text" }
         }
         
         console.error("[CHECK-GEMINI] Failed to list models:", modelsResponse.status, errorData)
@@ -81,14 +95,41 @@ export async function GET(req: Request) {
         })
       }
 
+      // 成功時のレスポンス処理
       let modelsData
+      let modelsText = ""
+      
       try {
-        modelsData = await modelsResponse.json()
-      } catch (parseError) {
-        console.error("[CHECK-GEMINI] Failed to parse models response:", parseError)
+        modelsText = await modelsResponse.text()
+        console.log("[CHECK-GEMINI] Models response text length:", modelsText.length)
+        
+        if (!modelsText || modelsText.trim() === '') {
+          console.warn("[CHECK-GEMINI] Empty response from Gemini models API")
+          return NextResponse.json({
+            available: true,
+            message: "Gemini APIキーは設定されていますが、空のレスポンスが返されました",
+            skipApiCheck: true,
+            timestamp: new Date().toISOString()
+          })
+        }
+        
+        try {
+          modelsData = JSON.parse(modelsText)
+        } catch (parseError) {
+          console.error("[CHECK-GEMINI] Failed to parse models response JSON:", parseError)
+          console.error("[CHECK-GEMINI] Models response text:", modelsText.substring(0, 500))
+          return NextResponse.json({
+            available: true,
+            message: "Gemini APIキーは設定されていますが、レスポンスの解析に失敗しました",
+            skipApiCheck: true,
+            timestamp: new Date().toISOString()
+          })
+        }
+      } catch (textError) {
+        console.error("[CHECK-GEMINI] Failed to read models response text:", textError)
         return NextResponse.json({
           available: true,
-          message: "Gemini APIキーは設定されていますが、レスポンスの解析に失敗しました",
+          message: "Gemini APIキーは設定されていますが、レスポンスの読み取りに失敗しました",
           skipApiCheck: true,
           timestamp: new Date().toISOString()
         })
