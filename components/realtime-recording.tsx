@@ -97,7 +97,7 @@ export default function RealtimeRecording({
         let interimTranscript = ''
         let finalTranscript = ''
         
-        // 新しい結果のみを処理
+        // 新しい結果のみを処理 - 重複を避けるために最新のインデックスのみ処理
         for (let i = lastResultIndex; i < event.results.length; i++) {
           const result = event.results[i]
           
@@ -119,11 +119,18 @@ export default function RealtimeRecording({
           }
         }
         
-        // 最終的な結果のみを文字起こしに追加
-        if (finalTranscript) {
-          finalTranscriptBuffer += finalTranscript
-          // 既存の文字起こしに追加（上書きではなく）
-          updateTranscript(finalTranscriptBuffer)
+        // 最終的な結果のみを文字起こしに追加 - 重複防止のため条件を厳格化
+        if (finalTranscript && finalTranscript.trim()) {
+          // 重複チェック: 同じ内容が連続していないか確認
+          const lastSentence = finalTranscriptBuffer.split(/[。．！？]/).pop() || ''
+          const newSentence = finalTranscript.trim()
+          
+          // 同じ内容の重複を防ぐ
+          if (lastSentence.trim() !== newSentence.trim()) {
+            finalTranscriptBuffer += finalTranscript
+            updateTranscript(finalTranscriptBuffer)
+          }
+          
           lastResultIndex = event.results.length
         }
       }
@@ -194,45 +201,52 @@ export default function RealtimeRecording({
         // リアルタイム文字起こしを開始
         if (enableTranscription && speechRecognition) {
           try {
-            // 音声認識を開始する前にバッファをリセット
-            if (speechRecognition.onresult) {
-              let finalTranscriptBuffer = ''
-              let lastResultIndex = 0
+            // 音声認識を開始する前にバッファをリセット - 重複防止
+            let finalTranscriptBuffer = transcript // 既存の文字起こしから開始
+            let lastResultIndex = 0
+            
+            speechRecognition.onresult = (event: any) => {
+              let interimTranscript = ''
+              let finalTranscript = ''
               
-              const originalOnResult = speechRecognition.onresult
-              speechRecognition.onresult = (event: any) => {
-                let interimTranscript = ''
-                let finalTranscript = ''
+              // 新しい結果のみを処理 - 重複防止のため厳格化
+              for (let i = lastResultIndex; i < event.results.length; i++) {
+                const result = event.results[i]
                 
-                // 新しい結果のみを処理
-                for (let i = lastResultIndex; i < event.results.length; i++) {
-                  const result = event.results[i]
-                  
-                  // 最も信頼度の高い結果を選択
-                  let bestTranscript = result[0].transcript
-                  let bestConfidence = result[0].confidence || 0
-                  
-                  for (let j = 1; j < result.length; j++) {
-                    if (result[j].confidence > bestConfidence) {
-                      bestTranscript = result[j].transcript
-                      bestConfidence = result[j].confidence
-                    }
-                  }
-                  
-                  if (result.isFinal) {
-                    finalTranscript += bestTranscript
-                  } else {
-                    interimTranscript += bestTranscript
+                // 最も信頼度の高い結果を選択
+                let bestTranscript = result[0].transcript
+                let bestConfidence = result[0].confidence || 0
+                
+                for (let j = 1; j < result.length; j++) {
+                  if (result[j].confidence > bestConfidence) {
+                    bestTranscript = result[j].transcript
+                    bestConfidence = result[j].confidence
                   }
                 }
                 
-                // 最終的な結果のみを文字起こしに追加
-                if (finalTranscript) {
-                  finalTranscriptBuffer += finalTranscript + ' '
-                  // 既存の文字起こしに追加（上書きではなく）
-                  updateTranscript(transcript + (transcript ? ' ' : '') + finalTranscriptBuffer)
-                  lastResultIndex = event.results.length
+                if (result.isFinal) {
+                  finalTranscript += bestTranscript
+                } else {
+                  interimTranscript += bestTranscript
                 }
+              }
+              
+              // 最終的な結果のみを文字起こしに追加 - 重複チェック強化
+              if (finalTranscript && finalTranscript.trim()) {
+                // 重複チェック: 直前の文と同じでないか確認
+                const trimmedNew = finalTranscript.trim()
+                const currentBuffer = finalTranscriptBuffer.trim()
+                
+                // 既に同じ内容が末尾にある場合は追加しない
+                if (!currentBuffer.endsWith(trimmedNew)) {
+                  // さらに、同じフレーズの重複を防ぐ
+                  const lastSentences = currentBuffer.split(/[。．！？\n]/).slice(-3).join('')
+                  if (!lastSentences.includes(trimmedNew.replace(/[。．！？\s]/g, ''))) {
+                    finalTranscriptBuffer += (finalTranscriptBuffer ? ' ' : '') + trimmedNew
+                    updateTranscript(finalTranscriptBuffer)
+                  }
+                }
+                lastResultIndex = event.results.length
               }
             }
             

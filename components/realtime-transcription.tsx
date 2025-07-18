@@ -249,7 +249,28 @@ const RealtimeTranscription = () => {
         }
 
         if (finalTranscript) {
-          setTranscript((prev) => prev + finalTranscript)
+          // 重複チェック: 同じ内容が連続していないか確認
+          setTranscript((prev) => {
+            const trimmedNew = finalTranscript.trim()
+            const trimmedPrev = prev.trim()
+            
+            // 既に同じ内容が末尾にある場合は追加しない
+            if (trimmedPrev.endsWith(trimmedNew)) {
+              return prev
+            }
+            
+            // 同じフレーズの重複を防ぐ - 直前の文と比較
+            const lastSentences = trimmedPrev.split(/[。．！？\n]/).slice(-2).join('')
+            const cleanNew = trimmedNew.replace(/[。．！？\s]/g, '')
+            const cleanLast = lastSentences.replace(/[。．！？\s]/g, '')
+            
+            if (cleanLast.includes(cleanNew) && cleanNew.length > 5) {
+              console.log("重複検出: スキップします", trimmedNew)
+              return prev
+            }
+            
+            return prev + finalTranscript
+          })
           setErrorCount(0) // 成功時にエラーカウントをリセット
           setConsecutiveErrors(0)
         }
