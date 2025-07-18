@@ -981,6 +981,35 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
           </Alert>
         )}
 
+        {/* 重複問題についての情報 */}
+        {!transcriptionResult && !error && file && (
+          <Alert className="border-blue-200 bg-blue-50">
+            <CheckCircle className="h-4 w-4 text-blue-600" />
+            <AlertDescription>
+              <div className="space-y-2">
+                <h4 className="font-medium text-blue-800">🔄 自動重複除去機能</h4>
+                <p className="text-sm text-blue-700">
+                  このシステムには<strong>10段階の高度な重複除去機能</strong>が搭載されています。
+                  同じ言葉や文章の繰り返しを自動的に検出・除去します。
+                </p>
+                <div className="text-xs text-blue-600">
+                  <strong>重複の主な原因:</strong>
+                  <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                    <li>音声認識APIの処理特性による重複生成</li>
+                    <li>音声データの品質や環境ノイズ</li>
+                    <li>話者の発話パターン（言い直し、繰り返し）</li>
+                    <li>音声ファイルの圧縮形式による影響</li>
+                  </ul>
+                  <p className="mt-2">
+                    <strong>※ 音声ファイル自体の問題ではなく、</strong>音声認識技術の仕組み上発生する現象です。
+                    本システムがこれらを自動的に改善します。
+                  </p>
+                </div>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* 高度な設定 */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">

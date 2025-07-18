@@ -3,6 +3,181 @@ import OpenAI from "openai"
 
 export const maxDuration = 300 // 5分に拡張（大きなファイル処理のため）
 
+// 10段階の超々強化重複除去システム（音声ファイル用）
+function removeDuplicatesUltraEnhanced(text: string): string {
+  if (!text || text.trim().length === 0) return text;
+
+  console.log('🔧 音声ファイル重複除去開始:', text.slice(0, 100) + '...');
+
+  // 編集距離（レーベンシュタイン距離）を計算
+  const getEditDistance = (str1: string, str2: string): number => {
+    const m = str1.length;
+    const n = str2.length;
+    const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (str1[i - 1] === str2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1];
+        } else {
+          dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        }
+      }
+    }
+    return dp[m][n];
+  };
+
+  // 類似度計算（0-1、1が最も類似）
+  const calculateSimilarity = (str1: string, str2: string): number => {
+    if (str1 === str2) return 1;
+    if (str1.length === 0 || str2.length === 0) return 0;
+    
+    const distance = getEditDistance(str1, str2);
+    const maxLength = Math.max(str1.length, str2.length);
+    return 1 - (distance / maxLength);
+  };
+
+  // 段階1: 事前清掃とノイズ除去
+  let cleanText = text
+    .replace(/\s+/g, ' ')  // 複数スペースを単一に
+    .replace(/([。．!！?？])\s*\1+/g, '$1')  // 句読点の重複除去
+    .replace(/([、，])\s*\1+/g, '$1')  // 読点の重複除去
+    .replace(/\s*([。．!！?？、，])\s*/g, '$1 ')  // 句読点前後のスペース正規化
+    .trim();
+
+  // 段階2: 極端な文字反復の除去（強化版）
+  cleanText = cleanText
+    .replace(/(.)\1{7,}/g, '$1$1')  // 8回以上の文字反復を2回に
+    .replace(/(.{1,3})\1{5,}/g, '$1$1')  // 1-3文字の6回以上反復を2回に
+    .replace(/(.{1,5})\1{3,}/g, '$1')  // 1-5文字の4回以上反復を1回に
+    .replace(/(.{1,10})\1{2,}/g, '$1')  // 1-10文字の3回以上反復を1回に
+    .replace(/(.{1,20})\1{1,}/g, (match, p1) => {
+      // 意味のある反復判定
+      if (p1.match(/^[あ-ん]{1,5}$|^[ァ-ヴ]{1,5}$|^[一-龠]{1,3}$/)) {
+        return p1; // ひらがな、カタカナ、漢字の短い反復は除去
+      }
+      return match; // それ以外は保持
+    });
+
+  // 段階3: 単語・フレーズレベルの反復除去
+  const words = cleanText.split(/\s+/);
+  const deduplicatedWords: string[] = [];
+  let i = 0;
+  
+  while (i < words.length) {
+    const word = words[i];
+    let consecutiveCount = 1;
+    
+    // 連続する同じ単語をカウント
+    while (i + consecutiveCount < words.length && words[i + consecutiveCount] === word) {
+      consecutiveCount++;
+    }
+    
+    // 意味のある反復を判定
+    const isMeaningfulRepetition = (w: string, count: number): boolean => {
+      const allowedDouble = ['すごく', 'とても', 'だんだん', 'どんどん', 'もっと', 'ずっと'];
+      if (allowedDouble.includes(w) && count <= 2) return true;
+      
+      const responseWords = ['はい', 'ええ', 'そう', 'うん', 'あー', 'うーん'];
+      if (responseWords.includes(w) && count <= 3) return true;
+      
+      return false;
+    };
+    
+    if (consecutiveCount >= 3 && !isMeaningfulRepetition(word, consecutiveCount)) {
+      deduplicatedWords.push(word);
+    } else if (consecutiveCount === 2 && word.length <= 3 && !isMeaningfulRepetition(word, 2)) {
+      deduplicatedWords.push(word);
+    } else {
+      for (let j = 0; j < Math.min(consecutiveCount, isMeaningfulRepetition(word, consecutiveCount) ? consecutiveCount : 2); j++) {
+        deduplicatedWords.push(word);
+      }
+    }
+    
+    i += consecutiveCount;
+  }
+
+  // 段階4: 文境界での分割と重複除去
+  let sentences = deduplicatedWords.join(' ').split(/[.!?。！？]/);
+  sentences = sentences.filter((sentence, index, arr) => {
+    const trimmed = sentence.trim();
+    if (trimmed.length === 0) return false;
+    
+    const firstIndex = arr.findIndex(s => s.trim() === trimmed);
+    return firstIndex === index;
+  });
+
+  // 段階5: 長いフレーズの類似度ベース重複除去
+  const filteredSentences: string[] = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const current = sentences[i].trim();
+    if (current.length === 0) continue;
+
+    let isDuplicate = false;
+    let bestMatchIndex = -1;
+    let bestSimilarity = 0;
+    
+    for (let j = 0; j < filteredSentences.length; j++) {
+      const existing = filteredSentences[j].trim();
+      const similarity = calculateSimilarity(current, existing);
+      
+      if (similarity > bestSimilarity) {
+        bestSimilarity = similarity;
+        bestMatchIndex = j;
+      }
+      
+      if (similarity >= 0.85) {  // 音声ファイルは85%閾値
+        isDuplicate = true;
+        break;
+      }
+    }
+    
+    if (isDuplicate && bestMatchIndex >= 0) {
+      if (current.length > filteredSentences[bestMatchIndex].length) {
+        filteredSentences[bestMatchIndex] = current;
+      }
+    } else if (!isDuplicate) {
+      filteredSentences.push(current);
+    }
+  }
+
+  // 段階6-10: 追加の清掃処理
+  let result = filteredSentences.join(' ')
+    .replace(/です\s+です/g, 'です')
+    .replace(/ます\s+ます/g, 'ます')
+    .replace(/という\s+という/g, 'という')
+    .replace(/について\s+について/g, 'について')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const originalLength = text.length;
+  const resultLength = result.length;
+  const reductionRatio = 1 - (resultLength / originalLength);
+  
+  console.log('📊 音声ファイル重複除去統計:', {
+    元の長さ: originalLength,
+    処理後: resultLength,
+    削減率: `${(reductionRatio * 100).toFixed(1)}%`
+  });
+  
+  // 過度な削除の検出
+  if (resultLength < originalLength * 0.15 && originalLength > 50) {
+    console.warn('⚠️ 過度な削除を検出、元テキストを保持');
+    return text;
+  }
+  
+  if (result.trim().length < 10 && originalLength > 30) {
+    console.warn('⚠️ 結果が極端に短い、安全版を返却');
+    return text.slice(0, Math.min(200, text.length)).trim() + '...';
+  }
+
+  console.log('✅ 音声ファイル重複除去完了');
+  return result;
+}
+
 // 文字起こし設定のインターフェース
 interface TranscriptionOptions {
   speakerDiarization?: boolean
@@ -193,8 +368,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "文字起こし結果が空です" }, { status: 400 })
     }
 
+    // 重複除去処理を適用
+    const cleanedTranscript = removeDuplicatesUltraEnhanced(transcription.text)
+    console.log("重複除去完了:", {
+      originalLength: transcription.text.length,
+      cleanedLength: cleanedTranscript.length,
+      reductionRatio: `${((1 - cleanedTranscript.length / transcription.text.length) * 100).toFixed(1)}%`
+    })
+
     let result: any = {
-      transcript: transcription.text,
+      transcript: cleanedTranscript,
+      originalTranscript: transcription.text, // デバッグ用に元のテキストも保存
       success: true,
     }
 
