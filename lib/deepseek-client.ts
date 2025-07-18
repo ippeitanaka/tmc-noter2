@@ -310,8 +310,9 @@ async function generateMinutesForSegment(
             content: fullPrompt,
           },
         ],
-        temperature: 0.2,
-        max_tokens: 4000,
+        temperature: 0.1, // 議事録の精度向上のため、より低い温度設定
+        max_tokens: 4096, // より詳細な議事録に対応
+        top_p: 0.8, // より一貫性のある出力を確保
       }),
     })
 

@@ -129,7 +129,8 @@ ${processedTranscript}`
             content: prompt,
           },
         ],
-        temperature: 0.3, // より一貫性のある出力のために温度を下げる
+        temperature: 0.1, // 議事録の精度向上のため、より低い温度設定
+        max_tokens: 4096, // より詳細な議事録に対応
       }),
     })
 

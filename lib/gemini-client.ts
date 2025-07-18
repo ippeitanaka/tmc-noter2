@@ -172,10 +172,10 @@ async function generateMinutesWithUserPrompt(
               },
             ],
             generationConfig: {
-              temperature: 0.3,
-              topK: 40,
-              topP: 0.92,
-              maxOutputTokens: 8192,
+              temperature: 0.1, // 議事録の精度向上のため、より低い温度設定
+              topK: 1, // 最も確率の高い選択肢を重視
+              topP: 0.8, // ある程度の多様性を保持
+              maxOutputTokens: 4096, // より長い議事録に対応
             },
             safetySettings: [
               {
