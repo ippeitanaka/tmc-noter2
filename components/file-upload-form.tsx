@@ -8,12 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, FileAudio, X, CheckCircle, AlertTriangle, Settings } from "lucide-react"
+import { Upload, FileAudio, X, CheckCircle, AlertTriangle } from "lucide-react"
 import { processAudioFile } from "@/lib/ffmpeg-helper"
 import { EditableTranscript } from "./editable-transcript"
 import { useApiConfig } from "@/contexts/api-config-context"
-import { generateMinutes } from "@/lib/minutes-generator"
-import type { AIModel } from "@/components/ai-model-selector"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
 const MAX_FILE_SIZE = 24 * 1024 * 1024 // 24MB (制限を少し下げて安全性を向上)
@@ -51,18 +49,6 @@ interface TranscriptionResult {
   success: boolean
 }
 
-interface Minutes {
-  meetingName: string
-  date: string
-  participants: string
-  agenda: string
-  mainPoints: string[]
-  decisions: string
-  todos: string
-  nextMeeting?: string
-  meetingDetails?: string
-}
-
 interface FileUploadFormProps {
   onTranscriptionComplete?: (result: TranscriptionResult) => void
   onAudioProcessed?: (buffer: AudioBuffer) => void
@@ -80,9 +66,6 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   const [error, setError] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [compressionInfo, setCompressionInfo] = useState<string | null>(null)
-  const [minutes, setMinutes] = useState<Minutes | null>(null)
-  const [isGeneratingMinutes, setIsGeneratingMinutes] = useState(false)
-  const [selectedAiModel, setSelectedAiModel] = useState<AIModel>("gemini")
   
   // 新しい高度な設定
   const [options, setOptions] = useState<TranscriptionOptions>({
@@ -837,29 +820,6 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
   }
 
-  // 議事録生成関数
-  const generateMinutesFromTranscript = async () => {
-    if (!transcriptionResult?.transcript) {
-      setError("文字起こし結果がありません。まず音声ファイルをアップロードして文字起こしを実行してください。")
-      return
-    }
-
-    setIsGeneratingMinutes(true)
-    setError(null)
-
-    try {
-      console.log("Generating minutes from transcript...")
-      const generatedMinutes = await generateMinutes(transcriptionResult.transcript, selectedAiModel)
-      setMinutes(generatedMinutes)
-      console.log("Minutes generated successfully:", generatedMinutes)
-    } catch (error) {
-      console.error("Minutes generation failed:", error)
-      setError(`議事録の生成に失敗しました: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      setIsGeneratingMinutes(false)
-    }
-  }
-
   return (
     <Card>
       <CardHeader>
@@ -1206,139 +1166,6 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 議事録生成ボタン */}
-        {transcriptionResult && (
-          <div className="space-y-2">
-            <Button
-              onClick={generateMinutesFromTranscript}
-              disabled={isGeneratingMinutes}
-              className="w-full"
-            >
-              {isGeneratingMinutes ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                  処理中...
-                </>
-              ) : (
-                <>
-                  <Settings className="h-4 w-4 mr-2" />
-                  議事録を生成
-                </>
-              )}
-            </Button>
-
-            {/* 生成された議事録 */}
-            {minutes && (
-              <div className="p-4 border rounded-lg bg-gray-50 space-y-2">
-                <h3 className="font-medium">生成された議事録</h3>
-                <div className="whitespace-pre-wrap text-sm">
-                  {Object.entries(minutes).map(([key, value]) => (
-                    <div key={key} className="flex flex-col">
-                      <span className="font-semibold text-gray-800">{key}</span>
-                      <span className="text-gray-600">{value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 議事録生成セクション */}
-        {transcriptionResult && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-medium">議事録</h3>
-              <div className="flex items-center gap-2">
-                <select
-                  value={selectedAiModel}
-                  onChange={(e) => setSelectedAiModel(e.target.value as AIModel)}
-                  className="px-3 py-1 border rounded text-sm"
-                  disabled={isGeneratingMinutes}
-                >
-                  <option value="gemini">Gemini</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="openai">OpenAI</option>
-                </select>
-                <Button
-                  onClick={generateMinutesFromTranscript}
-                  disabled={isGeneratingMinutes || !transcriptionResult}
-                  size="sm"
-                >
-                  {isGeneratingMinutes ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                      議事録生成中...
-                    </>
-                  ) : (
-                    "議事録を生成"
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            {/* 議事録表示 */}
-            {minutes && (
-              <div className="space-y-4 p-4 border rounded-lg bg-gray-50">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="font-medium text-sm text-gray-700 mb-1">会議名</h4>
-                    <p className="text-sm">{minutes.meetingName}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-gray-700 mb-1">日時</h4>
-                    <p className="text-sm">{minutes.date}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-gray-700 mb-1">参加者</h4>
-                    <p className="text-sm">{minutes.participants}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-gray-700 mb-1">議題</h4>
-                    <p className="text-sm">{minutes.agenda}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-medium text-sm text-gray-700 mb-2">主な議論内容</h4>
-                  <ul className="text-sm space-y-1">
-                    {minutes.mainPoints.map((point, index) => (
-                      <li key={index} className="flex items-start gap-2">
-                        <span className="text-gray-400 mt-1">•</span>
-                        <span>{point}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div>
-                  <h4 className="font-medium text-sm text-gray-700 mb-1">決定事項</h4>
-                  <p className="text-sm whitespace-pre-wrap">{minutes.decisions}</p>
-                </div>
-
-                <div>
-                  <h4 className="font-medium text-sm text-gray-700 mb-1">今後のアクション</h4>
-                  <p className="text-sm whitespace-pre-wrap">{minutes.todos}</p>
-                </div>
-
-                {minutes.nextMeeting && (
-                  <div>
-                    <h4 className="font-medium text-sm text-gray-700 mb-1">次回会議</h4>
-                    <p className="text-sm">{minutes.nextMeeting}</p>
-                  </div>
-                )}
-
-                {minutes.meetingDetails && (
-                  <div>
-                    <h4 className="font-medium text-sm text-gray-700 mb-1">その他</h4>
-                    <p className="text-sm whitespace-pre-wrap">{minutes.meetingDetails}</p>
-                  </div>
-                )}
               </div>
             )}
           </div>
