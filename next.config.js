@@ -28,7 +28,7 @@ const nextConfig = {
   serverExternalPackages: ["@ffmpeg/ffmpeg", "@ffmpeg/util"],
   // ファイルアップロード用の設定
   experimental: {
-    serverComponentsExternalPackages: ["@ffmpeg/ffmpeg", "@ffmpeg/util"],
+    // serverComponentsExternalPackages は serverExternalPackages に移行されました
   },
 }
 

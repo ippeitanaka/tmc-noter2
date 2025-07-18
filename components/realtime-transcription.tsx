@@ -6,8 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Mic, MicOff, AlertTriangle, Wifi, WifiOff } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
+import { Mic, MicOff, AlertTriangle, Wifi, WifiOff, FileText, Brain, Loader2 } from "lucide-react"
 import { TranscriptEditor } from "./editable-transcript"
+import { AIModelSelector } from "./ai-model-selector"
 
 interface SpeechRecognitionEvent {
   results: SpeechRecognitionResultList
@@ -54,6 +57,12 @@ const RealtimeTranscription = () => {
   const [lastActivityTime, setLastActivityTime] = useState(Date.now())
   const [isIntentionallyRunning, setIsIntentionallyRunning] = useState(false)
   const [consecutiveErrors, setConsecutiveErrors] = useState(0)
+  
+  // 議事録生成関連の状態
+  const [minutes, setMinutes] = useState("")
+  const [isGeneratingMinutes, setIsGeneratingMinutes] = useState(false)
+  const [minutesError, setMinutesError] = useState<string | null>(null)
+  const [selectedAiModel, setSelectedAiModel] = useState<"gemini" | "deepseek">("gemini")
 
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const isUserStoppedRef = useRef(false)
@@ -430,6 +439,45 @@ const RealtimeTranscription = () => {
     setConsecutiveErrors(0)
     setNetworkError(false)
     setLastActivityTime(Date.now())
+    setMinutes("")
+    setMinutesError(null)
+  }
+
+  // 議事録生成関数
+  const generateMinutes = async () => {
+    if (!transcript.trim()) {
+      setMinutesError("文字起こしテキストがありません")
+      return
+    }
+
+    setIsGeneratingMinutes(true)
+    setMinutesError(null)
+
+    try {
+      const response = await fetch("/api/generate-minutes-with-ai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          transcript: transcript,
+          model: selectedAiModel,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      setMinutes(data.minutes)
+    } catch (error) {
+      console.error("議事録生成エラー:", error)
+      setMinutesError(error instanceof Error ? error.message : "議事録の生成に失敗しました")
+    } finally {
+      setIsGeneratingMinutes(false)
+    }
   }
 
   // 強制的に再開する関数
@@ -598,27 +646,95 @@ const RealtimeTranscription = () => {
           )}
         </div>
 
-        {/* 文字起こし結果 */}
-        <div className="space-y-4">
-          <div className="min-h-[200px] p-3 border rounded-md bg-gray-50">
-            <div className="whitespace-pre-wrap">
-              {transcript}
-              {interimTranscript && <span className="text-gray-500 italic">{interimTranscript}</span>}
+        {/* 文字起こし結果と議事録 */}
+        <Tabs defaultValue="transcript" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="transcript" className="flex items-center gap-2">
+              <Mic className="h-4 w-4" />
+              文字起こし
+            </TabsTrigger>
+            <TabsTrigger value="minutes" className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              議事録
+              {minutes && <Badge variant="secondary" className="ml-1">生成済み</Badge>}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="transcript" className="space-y-4">
+            <div className="min-h-[200px] p-3 border rounded-md bg-gray-50">
+              <div className="whitespace-pre-wrap">
+                {transcript}
+                {interimTranscript && <span className="text-gray-500 italic">{interimTranscript}</span>}
+              </div>
+              {!transcript && !interimTranscript && (
+                <div className="text-gray-400 text-center py-8">録音ボタンを押して音声認識を開始してください</div>
+              )}
             </div>
-            {!transcript && !interimTranscript && (
-              <div className="text-gray-400 text-center py-8">録音ボタンを押して音声認識を開始してください</div>
+            
+            {/* 編集可能な文字起こし結果 */}
+            {transcript && (
+              <TranscriptEditor
+                transcript={transcript}
+                onTranscriptChange={setTranscript}
+                isRealtime={true}
+              />
             )}
-          </div>
-          
-          {/* 編集可能な文字起こし結果 */}
-          {transcript && (
-            <TranscriptEditor
-              transcript={transcript}
-              onTranscriptChange={setTranscript}
-              isRealtime={true}
-            />
-          )}
-        </div>
+          </TabsContent>
+
+          <TabsContent value="minutes" className="space-y-4">
+            {/* AIモデル選択 */}
+            <div className="space-y-2">
+              <Label>AIモデル選択</Label>
+              <AIModelSelector 
+                value={selectedAiModel}
+                onChange={setSelectedAiModel}
+              />
+            </div>
+
+            {/* 議事録生成ボタン */}
+            <Button
+              onClick={generateMinutes}
+              disabled={!transcript.trim() || isGeneratingMinutes}
+              className="w-full"
+            >
+              {isGeneratingMinutes ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  議事録生成中...
+                </>
+              ) : (
+                <>
+                  <Brain className="h-4 w-4 mr-2" />
+                  議事録を生成
+                </>
+              )}
+            </Button>
+
+            {/* 議事録生成エラー */}
+            {minutesError && (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{minutesError}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* 生成された議事録 */}
+            {minutes && (
+              <div className="space-y-2">
+                <Label>生成された議事録</Label>
+                <div className="min-h-[300px] p-3 border rounded-md bg-white whitespace-pre-wrap">
+                  {minutes}
+                </div>
+              </div>
+            )}
+
+            {!minutes && !minutesError && !isGeneratingMinutes && (
+              <div className="text-gray-400 text-center py-8">
+                文字起こしテキストから議事録を生成できます
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   )

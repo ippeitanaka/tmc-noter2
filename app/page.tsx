@@ -177,23 +177,12 @@ export default function Home() {
               onAudioProcessed={handleAudioProcessed}
               onTranscriptionClear={handleTranscriptionClear}
             />
-            {currentTranscript && (
-              <TranscriptDisplay 
-                transcript={currentTranscript}
-                onClear={handleTranscriptionClear}
-              />
-            )}
           </TabsContent>
 
           <TabsContent value="recording" className="space-y-6">
             <RealtimeRecording 
               onRecordingComplete={handleRealtimeRecording}
             />
-            {recordingTranscript && (
-              <TranscriptDisplay 
-                transcript={recordingTranscript}
-              />
-            )}
           </TabsContent>
 
           <TabsContent value="speakers" className="space-y-6">
