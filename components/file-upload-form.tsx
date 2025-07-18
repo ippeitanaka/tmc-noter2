@@ -764,7 +764,20 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
         throw new Error(errorMessage)
       }
 
-      const result = await response.json()
+      // 成功レスポンスの安全な処理
+      const responseText = await response.text()
+      if (!responseText) {
+        throw new Error(`Chunk ${index + 1}: Empty response from API`)
+      }
+
+      let result
+      try {
+        result = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error(`Chunk ${index + 1} JSON parse error:`, parseError)
+        console.error("Response text:", responseText.substring(0, 500))
+        throw new Error(`Chunk ${index + 1}: Failed to parse response - ${parseError}`)
+      }
       
       if (!result.transcript || result.transcript.trim().length === 0) {
         throw new Error("Empty transcript returned from API")

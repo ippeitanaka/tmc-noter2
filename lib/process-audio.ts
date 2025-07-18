@@ -146,7 +146,21 @@ const transcribeAudio = async (file: File): Promise<string> => {
       throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`)
     }
 
-    const result = await response.json()
+    // 成功レスポンスの安全な処理
+    const responseText = await response.text()
+    if (!responseText) {
+      throw new Error("OpenAI APIから空のレスポンスが返されました")
+    }
+
+    let result
+    try {
+      result = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error("Failed to parse OpenAI response JSON:", parseError)
+      console.error("Response text:", responseText.substring(0, 500))
+      throw new Error(`OpenAI APIレスポンスの解析に失敗しました: ${parseError}`)
+    }
+
     console.log("Transcription completed successfully")
     return result.text
   } catch (error) {
@@ -198,10 +212,25 @@ ${transcript}`
     })
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`)
+      const errorText = await response.text()
+      throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`)
     }
 
-    const result = await response.json()
+    // 成功レスポンスの安全な処理
+    const responseText = await response.text()
+    if (!responseText) {
+      throw new Error("OpenAI APIから空のレスポンスが返されました")
+    }
+
+    let result
+    try {
+      result = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error("Failed to parse OpenAI response JSON:", parseError)
+      console.error("Response text:", responseText.substring(0, 500))
+      throw new Error(`OpenAI APIレスポンスの解析に失敗しました: ${parseError}`)
+    }
+
     const text = result.choices[0].message.content
 
     console.log("Minutes generation completed successfully")

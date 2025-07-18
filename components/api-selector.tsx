@@ -202,20 +202,54 @@ export default function ApiSelector({ onConfigChange, currentConfig }: ApiSelect
         })
       })
       
-      const data = await response.json()
-      
-      if (response.ok) {
-        setTestResult('✅ API接続成功！')
-        setProviders(prev => ({
-          ...prev,
-          [selectedProvider]: {
-            ...prev[selectedProvider],
-            configured: true
-          }
-        }))
-      } else {
-        setTestResult(`❌ 接続失敗: ${data.error}`)
+      if (!response.ok) {
+        // エラーレスポンスの安全な処理
+        let errorText = ""
+        try {
+          errorText = await response.text()
+        } catch (textError) {
+          console.error("Failed to read error response:", textError)
+          errorText = "Failed to read error response"
+        }
+
+        let data
+        try {
+          data = JSON.parse(errorText)
+        } catch (parseError) {
+          console.error("Failed to parse error response JSON:", parseError)
+          setTestResult(`❌ 接続失敗 (${response.status}): ${errorText.substring(0, 200)}`)
+          return
+        }
+
+        setTestResult(`❌ 接続失敗: ${data.error || '不明なエラー'}`)
+        return
       }
+
+      // 成功レスポンスの安全な処理
+      const responseText = await response.text()
+      if (!responseText) {
+        setTestResult(`❌ 接続失敗: 空のレスポンス`)
+        return
+      }
+
+      let data
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error("Failed to parse API response JSON:", parseError)
+        console.error("Response text:", responseText.substring(0, 500))
+        setTestResult(`❌ レスポンス解析エラー: ${parseError}`)
+        return
+      }
+      
+      setTestResult('✅ API接続成功！')
+      setProviders(prev => ({
+        ...prev,
+        [selectedProvider]: {
+          ...prev[selectedProvider],
+          configured: true
+        }
+      }))
     } catch (error) {
       setTestResult(`❌ 接続エラー: ${error}`)
     } finally {

@@ -115,29 +115,69 @@ export default function AiSelector({ onConfigChange, currentConfig }: AiSelector
       switch (selectedProvider) {
         case 'gemini':
           response = await fetch('/api/check-gemini', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: selectedProvider })
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
           })
           break
         case 'openai':
           response = await fetch('/api/check-openai', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: selectedProvider })
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
           })
           break
         case 'deepseek':
           response = await fetch('/api/check-deepseek', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: selectedProvider })
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
           })
           break
       }
 
-      const result = await response.json()
-      setTestResult(result.success ? '✅ 接続成功' : `❌ ${result.error}`)
+      if (!response) {
+        throw new Error('レスポンスが取得できませんでした')
+      }
+
+      if (!response.ok) {
+        // エラーレスポンスの安全な処理
+        let errorText = ""
+        try {
+          errorText = await response.text()
+        } catch (textError) {
+          console.error("Failed to read error response:", textError)
+          errorText = "Failed to read error response"
+        }
+
+        let result
+        try {
+          result = JSON.parse(errorText)
+        } catch (parseError) {
+          console.error("Failed to parse error response JSON:", parseError)
+          throw new Error(`API接続エラー (${response.status}): ${errorText.substring(0, 200)}`)
+        }
+
+        throw new Error(result.error || `API接続エラー (${response.status})`)
+      }
+
+      // 成功レスポンスの安全な処理
+      const responseText = await response.text()
+      if (!responseText) {
+        throw new Error("APIから空のレスポンスが返されました")
+      }
+
+      let result
+      try {
+        result = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error("Failed to parse API response JSON:", parseError)
+        console.error("Response text:", responseText.substring(0, 500))
+        throw new Error(`APIレスポンスの解析に失敗しました: ${parseError}`)
+      }
+
+      if (result.error) {
+        throw new Error(result.error)
+      }
+
+      setTestResult(result.available ? '✅ 接続成功' : `❌ ${result.message || 'API利用不可'}`)
     } catch (error) {
       setTestResult(`❌ 接続エラー: ${error instanceof Error ? error.message : String(error)}`)
     } finally {

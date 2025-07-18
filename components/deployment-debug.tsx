@@ -16,10 +16,39 @@ export default function DeploymentDebug() {
 
     try {
       const response = await fetch("/api/debug")
-      const data = await response.json()
-
+      
       if (!response.ok) {
+        let errorText = ""
+        try {
+          errorText = await response.text()
+        } catch (textError) {
+          console.error("Failed to read error response:", textError)
+          errorText = "Failed to read error response"
+        }
+
+        let data
+        try {
+          data = JSON.parse(errorText)
+        } catch (parseError) {
+          throw new Error(`デバッグ情報の取得に失敗しました (${response.status}): ${errorText.substring(0, 200)}`)
+        }
+
         throw new Error(data.error || "デバッグ情報の取得に失敗しました")
+      }
+
+      // 成功レスポンスの安全な処理
+      const responseText = await response.text()
+      if (!responseText) {
+        throw new Error("デバッグAPIから空のレスポンスが返されました")
+      }
+
+      let data
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error("Failed to parse debug response JSON:", parseError)
+        console.error("Response text:", responseText.substring(0, 500))
+        throw new Error(`デバッグレスポンスの解析に失敗しました: ${parseError}`)
       }
 
       setDebugInfo(data)

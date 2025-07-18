@@ -24,11 +24,41 @@ export default function GeminiStatus() {
         })
 
         if (!response.ok) {
-          const result = await response.json()
+          // エラーレスポンスの安全な処理
+          let errorText = ""
+          try {
+            errorText = await response.text()
+          } catch (textError) {
+            console.error("Failed to read Gemini error response:", textError)
+            errorText = "Failed to read error response"
+          }
+
+          let result
+          try {
+            result = JSON.parse(errorText)
+          } catch (parseError) {
+            console.error("Failed to parse Gemini error response JSON:", parseError)
+            throw new Error(`Gemini API接続エラー (${response.status}): ${errorText.substring(0, 200)}`)
+          }
+
           throw new Error(result.error || "Gemini APIの接続に失敗しました")
         }
 
-        const result = await response.json()
+        // 成功レスポンスの安全な処理
+        const responseText = await response.text()
+        if (!responseText) {
+          throw new Error("Gemini APIから空のレスポンスが返されました")
+        }
+
+        let result
+        try {
+          result = JSON.parse(responseText)
+        } catch (parseError) {
+          console.error("Failed to parse Gemini response JSON:", parseError)
+          console.error("Response text:", responseText.substring(0, 500))
+          throw new Error(`Gemini APIレスポンスの解析に失敗しました: ${parseError}`)
+        }
+
         console.log("Gemini API check result:", result)
 
         // 利用可能なモデルを保存
