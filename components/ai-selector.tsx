@@ -70,24 +70,34 @@ export default function AiSelector({ onConfigChange, currentConfig }: AiSelector
 
   const checkEnvironmentApiKeys = async () => {
     try {
-      const response = await fetch('/api/check-env')
-      const data = await response.json()
+      // 個別のAPI接続チェックを実行
+      const [openaiCheck, geminiCheck, deepseekCheck] = await Promise.all([
+        fetch('/api/check-openai').then(res => res.json()).catch(() => ({ available: false })),
+        fetch('/api/check-gemini').then(res => res.json()).catch(() => ({ available: false })),
+        fetch('/api/check-deepseek').then(res => res.json()).catch(() => ({ available: false }))
+      ])
       
       setProviders(prev => ({
         ...prev,
         gemini: {
           ...prev.gemini,
-          configured: data.gemini || false
+          configured: geminiCheck.available || false
         },
         openai: {
           ...prev.openai,
-          configured: data.openai || false
+          configured: openaiCheck.available || false
         },
         deepseek: {
           ...prev.deepseek,
-          configured: data.deepseek || false
+          configured: deepseekCheck.available || false
         }
       }))
+
+      console.log('AI Status Check:', {
+        openai: openaiCheck.available,
+        gemini: geminiCheck.available,
+        deepseek: deepseekCheck.available
+      })
     } catch (error) {
       console.error('Environment check failed:', error)
     }
