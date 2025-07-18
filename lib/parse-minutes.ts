@@ -1,3 +1,28 @@
+// フォールバック議事録を作成する関数
+function createFallbackMinutes(): {
+  meetingName: string
+  date: string
+  participants: string
+  agenda: string
+  mainPoints: string[]
+  decisions: string
+  todos: string
+  nextMeeting?: string
+  meetingDetails?: string
+} {
+  return {
+    meetingName: "会議",
+    date: new Date().toLocaleDateString('ja-JP'),
+    participants: "不明",
+    agenda: "会議内容",
+    mainPoints: ["議事録の解析中にエラーが発生しました"],
+    decisions: "継続議論",
+    todos: "特になし",
+    nextMeeting: "",
+    meetingDetails: "",
+  }
+}
+
 // テキストから議事録の構造を抽出する関数
 export function parseMinutesText(text: string): {
   meetingName: string
@@ -10,43 +35,66 @@ export function parseMinutesText(text: string): {
   nextMeeting?: string
   meetingDetails?: string
 } {
-  console.log("Parsing minutes text:", text.substring(0, 200) + "...")
+  try {
+    console.log("Parsing minutes text:", text ? text.substring(0, 200) + "..." : "Empty text")
 
-  // 会議名を抽出（複数のパターンに対応）
-  const meetingNamePatterns = [
-    /■会議名[：:]*\s*(.+?)(?:\n|$)/i,
-    /会議名[：:]*\s*(.+?)(?:\n|$)/i,
-    /^#\s*(.+?)(?:\n|$)/i,
-    /^【(.+?)】(?:\n|$)/i,
-    /^(.+?)(?:会議|ミーティング)(?:\n|$)/i,
-  ]
-
-  let meetingName = "会議"
-  for (const pattern of meetingNamePatterns) {
-    const match = text.match(pattern)
-    if (match && match[1] && match[1].trim().length > 0) {
-      meetingName = match[1].trim()
-      break
+    // 入力値の検証
+    if (!text || typeof text !== 'string') {
+      console.warn("Invalid text input for parsing, using fallback")
+      return createFallbackMinutes()
     }
-  }
 
-  // 日時を抽出（複数のパターンに対応）
-  const datePatterns = [
-    /■日時[：:]*\s*(.+?)(?:\n|$)/i,
-    /日時[：:]*\s*(.+?)(?:\n|$)/i,
-    /開催日時[：:]*\s*(.+?)(?:\n|$)/i,
-    /(\d{4}年\d{1,2}月\d{1,2}日\s*(?:\d{1,2}時\d{1,2}分)?)/,
-    /(\d{1,2}月\d{1,2}日\s*(?:\d{1,2}時\d{1,2}分)?)/,
-  ]
-
-  let date = "不明"
-  for (const pattern of datePatterns) {
-    const match = text.match(pattern)
-    if (match && match[1] && match[1].trim().length > 0) {
-      date = match[1].trim()
-      break
+    const safeText = text.trim()
+    if (safeText.length === 0) {
+      console.warn("Empty text input for parsing, using fallback")
+      return createFallbackMinutes()
     }
-  }
+
+    // 会議名を抽出（複数のパターンに対応）
+    const meetingNamePatterns = [
+      /■会議名[：:]*\s*(.+?)(?:\n|$)/i,
+      /会議名[：:]*\s*(.+?)(?:\n|$)/i,
+      /^#\s*(.+?)(?:\n|$)/i,
+      /^【(.+?)】(?:\n|$)/i,
+      /^(.+?)(?:会議|ミーティング)(?:\n|$)/i,
+    ]
+
+    let meetingName = "会議"
+    for (const pattern of meetingNamePatterns) {
+      try {
+        const match = safeText.match(pattern)
+        if (match && match[1] && match[1].trim().length > 0) {
+          meetingName = match[1].trim()
+          break
+        }
+      } catch (regexError) {
+        console.warn("Regex error in meeting name parsing:", regexError)
+        continue
+      }
+    }
+
+    // 日時を抽出（複数のパターンに対応）
+    const datePatterns = [
+      /■日時[：:]*\s*(.+?)(?:\n|$)/i,
+      /日時[：:]*\s*(.+?)(?:\n|$)/i,
+      /開催日時[：:]*\s*(.+?)(?:\n|$)/i,
+      /(\d{4}年\d{1,2}月\d{1,2}日\s*(?:\d{1,2}時\d{1,2}分)?)/,
+      /(\d{1,2}月\d{1,2}日\s*(?:\d{1,2}時\d{1,2}分)?)/,
+    ]
+
+    let date = new Date().toLocaleDateString('ja-JP')
+    for (const pattern of datePatterns) {
+      try {
+        const match = safeText.match(pattern)
+        if (match && match[1] && match[1].trim().length > 0) {
+          date = match[1].trim()
+          break
+        }
+      } catch (regexError) {
+        console.warn("Regex error in date parsing:", regexError)
+        continue
+      }
+    }
 
   // 参加者を抽出（複数のパターンに対応）
   const participantsPatterns = [
@@ -207,5 +255,12 @@ export function parseMinutesText(text: string): {
     todos,
     nextMeeting,
     meetingDetails,
+  }
+  } catch (error) {
+    console.error("Error parsing minutes text:", error)
+    console.error("Problematic text:", text ? text.substring(0, 500) : "No text provided")
+    
+    // パースエラーが発生した場合はフォールバック議事録を返す
+    return createFallbackMinutes()
   }
 }

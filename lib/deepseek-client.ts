@@ -316,12 +316,54 @@ async function generateMinutesForSegment(
     })
 
     if (!response.ok) {
-      const errorData = await response.json()
+      let errorData: any;
+      try {
+        errorData = await response.json()
+      } catch (parseError) {
+        console.error("Failed to parse DeepSeek error response:", parseError)
+        throw new Error(`DeepSeek API error: ${response.status} ${response.statusText} (エラー詳細の取得に失敗)`)
+      }
       throw new Error(`DeepSeek API error: ${response.status} ${JSON.stringify(errorData)}`)
     }
 
-    const result = await response.json()
+    // レスポンステキストの安全な取得
+    let responseText: string;
+    try {
+      responseText = await response.text()
+      console.log("DeepSeek API response text length:", responseText.length)
+    } catch (textError) {
+      console.error("Failed to read DeepSeek response text:", textError)
+      throw new Error(`DeepSeek APIレスポンステキストの読み取りに失敗: ${textError}`)
+    }
+
+    // 空のレスポンスチェック
+    if (!responseText || responseText.trim() === '') {
+      console.error("Empty response from DeepSeek API")
+      throw new Error("DeepSeek APIから空のレスポンスが返されました")
+    }
+
+    // JSON解析
+    let result: any;
+    try {
+      result = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error("Failed to parse DeepSeek JSON response:", parseError)
+      console.error("DeepSeek response text:", responseText.substring(0, 1000))
+      throw new Error(`DeepSeek APIレスポンスのJSON解析に失敗: ${parseError}`)
+    }
+
+    // レスポンス構造の検証
+    if (!result.choices || !result.choices[0] || !result.choices[0].message || !result.choices[0].message.content) {
+      console.error("Unexpected DeepSeek API response structure:", result)
+      throw new Error("DeepSeek APIから予期しないレスポンス構造が返されました")
+    }
+
     const text = result.choices[0].message.content
+    if (!text || typeof text !== 'string') {
+      console.error("Invalid text content in DeepSeek response:", text)
+      throw new Error("DeepSeek APIレスポンスに有効なテキストが含まれていません")
+    }
+
     console.log("DeepSeek API response:", text.substring(0, 200) + "...")
 
     // 議事録をパースして構造化

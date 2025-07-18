@@ -19,6 +19,11 @@ export async function generateMinutes(transcript: string, model: AIModel = "gemi
     console.log(`Generating minutes using ${model} model`)
     console.log(`Transcript length: ${transcript.length} characters`)
 
+    // 入力値の検証
+    if (!transcript || typeof transcript !== 'string' || transcript.trim() === '') {
+      throw new Error("有効な文字起こしデータが必要です")
+    }
+
     // サーバーサイドAPIを呼び出す
     const response = await fetch("/api/generate-minutes-with-ai", {
       method: "POST",
@@ -26,21 +31,68 @@ export async function generateMinutes(transcript: string, model: AIModel = "gemi
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        transcript,
+        transcript: transcript.trim(),
         model,
       }),
     })
 
+    console.log("Minutes API response status:", response.status)
+    console.log("Minutes API response ok:", response.ok)
+
+    // レスポンステキストの安全な取得
+    let responseText: string;
+    try {
+      responseText = await response.text()
+      console.log("Minutes API response text length:", responseText.length)
+    } catch (textError) {
+      throw new Error(`レスポンステキストの読み取りに失敗: ${textError instanceof Error ? textError.message : String(textError)}`)
+    }
+
+    // 空のレスポンスチェック
+    if (!responseText || responseText.trim() === '') {
+      throw new Error("サーバーから空のレスポンスが返されました")
+    }
+
+    // JSON解析
+    let data: any;
+    try {
+      data = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error("Minutes API JSON parse error:", parseError)
+      console.error("Minutes API response text:", responseText.substring(0, 1000))
+      throw new Error(`JSONレスポンスの解析に失敗: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
+    }
+
     if (!response.ok) {
-      const errorData = await response.json()
+      const errorData = data
+      const errorMessage = errorData.error || "Unknown error"
+      const errorDetails = errorData.details || ""
+      
+      console.error("Minutes API error:", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorMessage,
+        details: errorDetails
+      })
+      
       throw new Error(
-        `API error: ${response.status} ${response.statusText} - ${
-          errorData.error || "Unknown error"
-        } ${errorData.details || ""}`,
+        `API error: ${response.status} ${response.statusText} - ${errorMessage} ${errorDetails}`,
       )
     }
 
-    const data = await response.json()
+    // レスポンスデータの検証
+    if (!data.minutes) {
+      console.error("No minutes in API response:", data)
+      throw new Error("議事録データが含まれていないレスポンスです")
+    }
+
+    console.log("Minutes generation successful:", {
+      usedModel: data.usedModel,
+      requestedModel: data.requestedModel,
+      fallbackReason: data.fallbackReason,
+      success: data.success
+    })
+
     return data.minutes
   } catch (error) {
     console.error("Minutes generation error:", error)

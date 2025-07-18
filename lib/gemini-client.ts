@@ -240,7 +240,31 @@ async function generateMinutesWithUserPrompt(
         throw new Error(`Gemini API error: ${response.status} ${JSON.stringify(errorData)}`)
       }
 
-      const result = await response.json()
+      // レスポンステキストの安全な取得
+      let responseText: string;
+      try {
+        responseText = await response.text()
+        console.log("Gemini API response text length:", responseText.length)
+      } catch (textError) {
+        console.error("Failed to read Gemini response text:", textError)
+        throw new Error(`Gemini APIレスポンステキストの読み取りに失敗: ${textError}`)
+      }
+
+      // 空のレスポンスチェック
+      if (!responseText || responseText.trim() === '') {
+        console.error("Empty response from Gemini API")
+        throw new Error("Gemini APIから空のレスポンスが返されました")
+      }
+
+      // JSON解析
+      let result: any;
+      try {
+        result = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error("Failed to parse Gemini JSON response:", parseError)
+        console.error("Gemini response text:", responseText.substring(0, 1000))
+        throw new Error(`Gemini APIレスポンスのJSON解析に失敗: ${parseError}`)
+      }
 
       // レスポンスの構造を確認
       if (
@@ -250,11 +274,16 @@ async function generateMinutesWithUserPrompt(
         !result.candidates[0].content.parts ||
         !result.candidates[0].content.parts[0]
       ) {
-        console.error("Unexpected API response structure:", result)
-        throw new Error("Unexpected API response structure")
+        console.error("Unexpected Gemini API response structure:", result)
+        throw new Error("Gemini APIから予期しないレスポンス構造が返されました")
       }
 
       const text = result.candidates[0].content.parts[0].text
+      if (!text || typeof text !== 'string') {
+        console.error("Invalid text content in Gemini response:", text)
+        throw new Error("Gemini APIレスポンスに有効なテキストが含まれていません")
+      }
+
       console.log("Gemini API response:", text.substring(0, 200) + "...")
 
       // 議事録をパースして構造化

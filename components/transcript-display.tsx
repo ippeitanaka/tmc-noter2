@@ -330,6 +330,8 @@ export default function TranscriptDisplay({
       const timeoutId = setTimeout(() => controller.abort(), 120000) // 2分のタイムアウト
       
       try {
+        console.log("Starting minutes generation request...")
+        
         const response = await fetch("/api/generate-minutes-with-ai", {
           method: "POST",
           headers: {
@@ -345,35 +347,79 @@ export default function TranscriptDisplay({
         clearTimeout(timeoutId)
 
         console.log("API response status:", response.status)
+        console.log("API response ok:", response.ok)
         console.log("API response headers:", Object.fromEntries(response.headers.entries()))
 
-        // レスポンステキストを取得
-        const responseText = await response.text()
-        console.log("API response text length:", responseText.length)
-        console.log("API response text preview:", responseText.substring(0, 500))
+        // Content-Typeをチェック
+        const contentType = response.headers.get('content-type');
+        console.log("Content-Type:", contentType);
 
-        let data
+        // レスポンステキストを取得
+        let responseText: string;
+        try {
+          responseText = await response.text()
+          console.log("API response text length:", responseText.length)
+          console.log("API response text preview:", responseText.substring(0, 500))
+        } catch (textError) {
+          console.error("Failed to read response text:", textError)
+          throw new Error(`レスポンステキストの読み取りに失敗しました: ${textError instanceof Error ? textError.message : String(textError)}`)
+        }
+
+        // 空のレスポンスチェック
+        if (!responseText || responseText.trim() === '') {
+          console.error("Empty response received from server")
+          throw new Error("サーバーから空のレスポンスが返されました。サーバーログを確認してください。")
+        }
+
+        // JSON解析
+        let data: any;
         try {
           data = JSON.parse(responseText)
+          console.log("JSON parsing successful")
         } catch (parseError) {
           console.error("Failed to parse JSON response:", parseError)
           console.error("Response text:", responseText)
+          
+          // Content-Typeがapplication/jsonでない場合の追加チェック
+          if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`サーバーが無効なContent-Type (${contentType}) を返しました。HTMLエラーページまたはプロキシエラーの可能性があります。`)
+          }
+          
           throw new Error(`JSONレスポンスの解析に失敗しました: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
         }
 
+        // HTTPエラーレスポンスの処理
         if (!response.ok) {
+          const errorMessage = data.error || "Unknown error"
+          const errorDetails = data.details || ""
+          const errorTimestamp = data.timestamp || ""
+          
+          console.error("API error response:", {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorMessage,
+            details: errorDetails,
+            timestamp: errorTimestamp
+          })
+          
           throw new Error(
-            `API error: ${response.status} ${response.statusText} - ${
-              data.error || "Unknown error"
-            } ${data.details || ""}`,
+            `API error: ${response.status} ${response.statusText} - ${errorMessage} ${errorDetails}`,
           )
+        }
+        
+        // レスポンスデータの検証
+        if (!data.minutes) {
+          console.error("No minutes in response:", data)
+          throw new Error("サーバーレスポンスに議事録データが含まれていません")
         }
         
         const newMinutes = data.minutes
         const usedModel = data.usedModel
         const fallbackReason = data.fallbackReason
+        const success = data.success
 
-        console.log("Regenerated minutes:", JSON.stringify(newMinutes).substring(0, 200) + "...")
+        console.log("Regenerated minutes received:", JSON.stringify(newMinutes).substring(0, 200) + "...")
+        console.log("Response metadata:", { usedModel, fallbackReason, success })
 
         // 使用されたモデルが要求したモデルと異なる場合は通知
         if (usedModel && usedModel !== aiConfig.provider) {
@@ -385,12 +431,14 @@ export default function TranscriptDisplay({
             fallbackMessage += "APIキーが設定されていないため、代替モデルを使用しました。"
           } else if (fallbackReason === "API_ERROR") {
             fallbackMessage += "APIエラーが発生したため、代替モデルを使用しました。"
+          } else if (fallbackReason === "JSON_SERIALIZATION_ERROR") {
+            fallbackMessage += "レスポンス処理エラーのため、安全なフォールバックレスポンスを使用しました。"
           }
 
           toast({
             title: "モデル変更通知",
             description: fallbackMessage,
-            variant: "destructive",
+            variant: success === false ? "destructive" : "default",
           })
         } else {
           toast({

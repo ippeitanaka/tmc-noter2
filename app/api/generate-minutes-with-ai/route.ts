@@ -26,21 +26,35 @@ const USER_SPECIFIED_PROMPT = `あなたは会議の内容を正確かつ簡潔�
 `
 
 export async function POST(req: Request) {
+  console.log("[SERVER] Minutes generation request received at:", new Date().toISOString())
+  
   try {
-    console.log("[SERVER] Minutes generation request received")
-    
     // リクエストボディの安全な解析
     let requestData
     try {
       const body = await req.text()
       console.log("[SERVER] Request body length:", body.length)
+      
+      if (!body || body.trim() === '') {
+        console.error("[SERVER] Empty request body")
+        return NextResponse.json(
+          { 
+            error: "リクエストボディが空です",
+            details: "有効なJSONデータを送信してください",
+            timestamp: new Date().toISOString()
+          }, 
+          { status: 400 }
+        )
+      }
+      
       requestData = JSON.parse(body)
     } catch (parseError) {
       console.error("[SERVER] Failed to parse request body:", parseError)
       return NextResponse.json(
         { 
           error: "リクエストデータの解析に失敗しました",
-          details: parseError instanceof Error ? parseError.message : String(parseError)
+          details: parseError instanceof Error ? parseError.message : String(parseError),
+          timestamp: new Date().toISOString()
         }, 
         { status: 400 }
       )
@@ -50,7 +64,18 @@ export async function POST(req: Request) {
 
     if (!transcript) {
       console.warn("[SERVER] No transcript provided")
-      return NextResponse.json({ error: "文字起こしデータがありません" }, { status: 400 })
+      return NextResponse.json({ 
+        error: "文字起こしデータがありません",
+        timestamp: new Date().toISOString()
+      }, { status: 400 })
+    }
+
+    if (typeof transcript !== 'string' || transcript.trim() === '') {
+      console.warn("[SERVER] Invalid transcript provided")
+      return NextResponse.json({ 
+        error: "有効な文字起こしデータがありません",
+        timestamp: new Date().toISOString()
+      }, { status: 400 })
     }
 
     if (!model) {
@@ -201,37 +226,97 @@ export async function POST(req: Request) {
           details: "生成結果が空です",
           usedModel: "rule-based",
           fallbackReason: "GENERATION_FAILED",
+          timestamp: new Date().toISOString(),
         },
         { status: 500 }
       )
+    }
+
+    // 議事録オブジェクトの構造を検証
+    const requiredFields = ['meetingName', 'date', 'participants', 'agenda', 'mainPoints', 'decisions', 'todos'];
+    const missingFields = requiredFields.filter(field => !(field in minutes));
+    
+    if (missingFields.length > 0) {
+      console.warn("[SERVER] Minutes object missing required fields:", missingFields);
+      // 不足しているフィールドをデフォルト値で補完
+      const defaultValues: any = {
+        meetingName: "会議",
+        date: new Date().toLocaleDateString('ja-JP'),
+        participants: "不明",
+        agenda: "会議内容",
+        mainPoints: [],
+        decisions: "継続議論",
+        todos: "特になし",
+        nextMeeting: "",
+        meetingDetails: ""
+      };
+      
+      missingFields.forEach(field => {
+        (minutes as any)[field] = defaultValues[field];
+      });
     }
 
     console.log("[SERVER] Minutes generation completed successfully")
     console.log("[SERVER] Used model:", usedModel)
+    console.log("[SERVER] Minutes structure validated")
     
+    // 安全なレスポンスオブジェクトを作成
     const response = {
-      minutes,
-      usedModel,
-      requestedModel: model || "gemini",
-      fallbackReason,
+      minutes: {
+        meetingName: String(minutes.meetingName || "会議"),
+        date: String(minutes.date || new Date().toLocaleDateString('ja-JP')),
+        participants: String(minutes.participants || "不明"),
+        agenda: String(minutes.agenda || "会議内容"),
+        mainPoints: Array.isArray(minutes.mainPoints) ? minutes.mainPoints.map(String) : [],
+        decisions: String(minutes.decisions || "継続議論"),
+        todos: String(minutes.todos || "特になし"),
+        nextMeeting: String(minutes.nextMeeting || ""),
+        meetingDetails: String(minutes.meetingDetails || "")
+      },
+      usedModel: String(usedModel || "rule-based"),
+      requestedModel: String(model || "gemini"),
+      fallbackReason: fallbackReason || null,
       timestamp: new Date().toISOString(),
+      success: true
     }
     
     // レスポンスが有効なJSONであることを確認
     try {
-      JSON.stringify(response)
+      const jsonString = JSON.stringify(response)
+      console.log("[SERVER] Response JSON size:", jsonString.length, "bytes")
+      
+      // JSONが有効かテスト
+      JSON.parse(jsonString)
+      console.log("[SERVER] Response validation successful")
+      
+      return NextResponse.json(response)
     } catch (jsonError) {
       console.error("[SERVER] Failed to serialize response:", jsonError)
-      return NextResponse.json(
-        {
-          error: "レスポンスの生成に失敗しました",
-          details: "JSONシリアライゼーションエラー",
+      console.error("[SERVER] Problematic response object:", response)
+      
+      // 最小限の安全なレスポンス
+      const fallbackResponse = {
+        minutes: {
+          meetingName: "会議",
+          date: new Date().toLocaleDateString('ja-JP'),
+          participants: "不明",
+          agenda: "会議内容",
+          mainPoints: ["議事録の生成中にエラーが発生しました"],
+          decisions: "継続議論",
+          todos: "特になし",
+          nextMeeting: "",
+          meetingDetails: ""
         },
-        { status: 500 }
-      )
+        usedModel: "rule-based",
+        requestedModel: model || "gemini",
+        fallbackReason: "JSON_SERIALIZATION_ERROR",
+        timestamp: new Date().toISOString(),
+        success: false,
+        warning: "レスポンスのシリアライゼーションに失敗したため、フォールバックレスポンスを返しています"
+      }
+      
+      return NextResponse.json(fallbackResponse, { status: 200 })
     }
-
-    return NextResponse.json(response)
   } catch (error) {
     console.error("[SERVER] Minutes generation error:", error)
     
