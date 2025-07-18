@@ -58,11 +58,35 @@ export default function EnvSetupGuide() {
                 >
                   OpenAI API Keys
                 </a>
-                から取得したAPIキー
+                から取得したAPIキー (sk- で始まる文字列)
+              </li>
+              <li>
+                <code className="bg-gray-100 px-1 py-0.5 rounded">GEMINI_API_KEY</code>:
+                <a
+                  href="https://makersuite.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline ml-1"
+                >
+                  Google AI Studio
+                </a>
+                から取得したAPIキー (AIza で始まる文字列)
+              </li>
+              <li>
+                <code className="bg-gray-100 px-1 py-0.5 rounded">DEEPSEEK_API_KEY</code>:
+                <a
+                  href="https://platform.deepseek.com/api_keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline ml-1"
+                >
+                  DeepSeek API Keys
+                </a>
+                から取得したAPIキー (sk- で始まる文字列)
               </li>
               <li>
                 <code className="bg-gray-100 px-1 py-0.5 rounded">NEXT_PUBLIC_SUPABASE_URL</code>:
-                SupabaseプロジェクトのURL
+                SupabaseプロジェクトのURL (https://xxx.supabase.co 形式)
               </li>
               <li>
                 <code className="bg-gray-100 px-1 py-0.5 rounded">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>:
@@ -73,10 +97,42 @@ export default function EnvSetupGuide() {
                 Supabaseのサービスロールキー
               </li>
             </ul>
+            <div className="mt-3 p-3 bg-blue-50 rounded border-l-4 border-blue-400">
+              <p className="text-sm text-blue-800">
+                <strong>重要:</strong> 少なくとも1つのAI APIキー（OpenAI、Gemini、またはDeepSeek）を設定する必要があります。
+                議事録生成機能を使用するには、これらのAPIキーが必要です。
+              </p>
+            </div>
           </div>
 
           <div className="mb-4">
-            <h4 className="font-medium">3. Supabaseの設定</h4>
+            <h4 className="font-medium">3. Vercelでの環境変数設定手順</h4>
+            <div className="text-sm text-gray-600 space-y-2">
+              <div className="p-3 bg-gray-50 rounded border">
+                <ol className="list-decimal pl-5 space-y-2">
+                  <li>Vercelダッシュボードでプロジェクトを選択</li>
+                  <li>「Settings」タブをクリック</li>
+                  <li>左側メニューから「Environment Variables」を選択</li>
+                  <li>「Add New」ボタンをクリック</li>
+                  <li>Name欄に環境変数名（例：OPENAI_API_KEY）を入力</li>
+                  <li>Value欄にAPIキーを入力</li>
+                  <li>Environment で「Production」「Preview」「Development」すべてを選択</li>
+                  <li>「Save」ボタンをクリック</li>
+                  <li>すべての必要な環境変数について手順4-8を繰り返す</li>
+                  <li>設定完了後、「Deployments」タブから最新デプロイメントを「Redeploy」</li>
+                </ol>
+              </div>
+              <div className="mt-3 p-3 bg-yellow-50 rounded border-l-4 border-yellow-400">
+                <p className="text-sm text-yellow-800">
+                  <strong>注意:</strong> 環境変数を追加または変更した後は、必ずアプリケーションを再デプロイしてください。
+                  環境変数の変更は次のデプロイメント時に反映されます。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <h4 className="font-medium">4. Supabaseの設定</h4>
             <p className="text-sm text-gray-600 mb-2">Supabaseダッシュボードで以下の設定を行います：</p>
             <ul className="list-disc pl-5 text-sm text-gray-600 space-y-2">
               <li>
@@ -102,7 +158,7 @@ CREATE INDEX IF NOT EXISTS idx_audio_files_created_at ON audio_files(created_at)
           </div>
 
           <div>
-            <h4 className="font-medium">4. 再デプロイ</h4>
+            <h4 className="font-medium">5. 再デプロイ</h4>
             <p className="text-sm text-gray-600">
               環境変数を設定した後、Vercelダッシュボードから「Redeploy」を実行して変更を適用します。
             </p>
