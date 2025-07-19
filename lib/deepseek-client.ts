@@ -1,16 +1,7 @@
 import { parseMinutesText } from "./parse-minutes"
+import { generateMinutesRuleBased } from "./rule-based-minutes"
 
-// APIキーの取得
-const getDeepSeekApiKey = (): string => {
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  if (!apiKey) {
-    console.warn("DEEPSEEK_API_KEY is not set. Using demo mode with limited functionality.")
-    return ""
-  }
-  return apiKey
-}
-
-// 議事録を生成する関数
+// 超高精度議事録生成（notta レベル）
 export async function generateMinutesWithDeepSeek(
   transcript: string,
   userPrompt: string,
@@ -25,223 +16,160 @@ export async function generateMinutesWithDeepSeek(
   nextMeeting?: string
   meetingDetails?: string
 }> {
+  console.log("🚀 Starting enhanced DeepSeek minutes generation")
+  
   try {
-    const apiKey = getDeepSeekApiKey()
-
-    // APIキーがない場合はルールベースの生成にフォールバック
+    const apiKey = process.env.DEEPSEEK_API_KEY
     if (!apiKey) {
-      console.warn("DeepSeek API key is not set, falling back to rule-based generation")
       throw new Error("DeepSeek APIキーが設定されていません")
     }
 
-    // 長い文字起こしを分割して処理
-    const segmentedMinutes = await processLongTranscript(transcript, apiKey, userPrompt)
-
-    // 分割処理した結果がある場合はそれを返す
-    if (segmentedMinutes) {
-      return segmentedMinutes
+    // 事前品質チェック
+    if (!transcript || transcript.trim().length < 10) {
+      throw new Error("文字起こしが短すぎます")
     }
 
-    // 分割処理しなかった場合（短い文字起こし）は通常処理
-    return await generateMinutesForSegment(transcript, apiKey, userPrompt)
-  } catch (error) {
-    console.error("Minutes generation error:", error)
-    // エラーが発生した場合は上位層でハンドリングするためにエラーを再スロー
-    throw error
-  }
-}
+    // スマートなトークン制限処理とセグメント化
+    const segments = optimizeAndSegmentTranscript(transcript)
+    
+    console.log(`📊 Transcript segmented into ${segments.length} parts`)
 
-// 長い文字起こしを分割して処理する関数
-async function processLongTranscript(
-  transcript: string,
-  apiKey: string,
-  userPrompt: string,
-): Promise<{
-  meetingName: string
-  date: string
-  participants: string
-  agenda: string
-  mainPoints: string[]
-  decisions: string
-  todos: string
-  nextMeeting?: string
-  meetingDetails?: string
-} | null> {
-  // 文字数が一定以上の場合のみ分割処理
-  if (transcript.length < 5000) {
-    return null // 短い文字起こしは分割せず通常処理
-  }
-
-  console.log("Transcript is long, processing in segments...")
-
-  // 文字起こしをセグメントに分割
-  const segments = splitTranscriptIntoSegments(transcript)
-
-  if (segments.length <= 1) {
-    return null // 分割できなかった場合は通常処理
-  }
-
-  // 各セグメントを個別に処理
-  const segmentResults = []
-  for (let i = 0; i < segments.length; i++) {
-    console.log(`Processing segment ${i + 1} of ${segments.length}...`)
-    try {
-      const segmentResult = await generateMinutesForSegment(segments[i], apiKey, userPrompt, i + 1, segments.length)
-      segmentResults.push(segmentResult)
-    } catch (error) {
-      console.error(`Error processing segment ${i + 1}:`, error)
-      // エラーが発生しても処理を続行
-    }
-  }
-
-  // 結果をマージ
-  return mergeSegmentResults(segmentResults)
-}
-
-// 文字起こしをセグメントに分割する関数
-function splitTranscriptIntoSegments(transcript: string): string[] {
-  // 文字起こしを段落や文で分割
-  const paragraphs = transcript.split(/\n\s*\n/).filter((p) => p.trim().length > 0)
-
-  // セグメントの最大文字数（約5000文字）
-  const maxSegmentLength = 5000
-
-  // セグメントを格納する配列
-  const segments: string[] = []
-
-  let currentSegment = ""
-
-  for (const paragraph of paragraphs) {
-    // 現在のセグメントに段落を追加した場合の長さをチェック
-    if (currentSegment.length + paragraph.length + 1 <= maxSegmentLength) {
-      // 追加しても最大長を超えない場合は追加
-      currentSegment += (currentSegment ? "\n\n" : "") + paragraph
+    if (segments.length === 1) {
+      // シングルセグメント処理
+      const result = await processSegmentWithRetry(segments[0], apiKey, userPrompt, 1, 1)
+      console.log("✅ Single segment DeepSeek generation successful")
+      return result
     } else {
-      // 最大長を超える場合は新しいセグメントを開始
-      if (currentSegment) {
-        segments.push(currentSegment)
-      }
-
-      // 段落自体が最大長を超える場合は分割
-      if (paragraph.length > maxSegmentLength) {
-        // 文単位で分割
-        const sentences = paragraph.split(/(?<=[。.！!？?])\s*/).filter((s) => s.trim().length > 0)
-
-        currentSegment = ""
-        for (const sentence of sentences) {
-          if (currentSegment.length + sentence.length + 1 <= maxSegmentLength) {
-            currentSegment += (currentSegment ? " " : "") + sentence
-          } else {
-            if (currentSegment) {
-              segments.push(currentSegment)
-            }
-            currentSegment = sentence
-          }
-        }
-      } else {
-        currentSegment = paragraph
-      }
+      // マルチセグメント処理
+      const results = await processMultipleSegments(segments, apiKey, userPrompt)
+      const mergedResult = mergeSegmentResults(results)
+      console.log("✅ Multi-segment DeepSeek generation successful")
+      return mergedResult
     }
+    
+  } catch (error) {
+    console.error("❌ DeepSeek minutes generation failed:", error)
+    // 高品質フォールバック
+    console.warn("🔄 Falling back to enhanced rule-based generation")
+    return generateMinutesRuleBased(transcript)
   }
+}
 
-  // 最後のセグメントを追加
-  if (currentSegment) {
-    segments.push(currentSegment)
+// スマートなトランスクリプト最適化とセグメント化
+function optimizeAndSegmentTranscript(transcript: string): string[] {
+  console.log("🔧 Optimizing and segmenting transcript for DeepSeek")
+  
+  // DeepSeek-V3 の効率的な処理のための最適化
+  const maxTokensPerSegment = 12000 // DeepSeek-V3 の効率的な処理範囲
+  const estimatedTokens = Math.ceil(transcript.length * 1.3) // 日本語での正確な推定
+  
+  if (estimatedTokens <= maxTokensPerSegment) {
+    console.log("📄 Single segment processing")
+    return [transcript]
   }
-
+  
+  console.log(`📏 Large transcript detected: ${estimatedTokens} tokens, segmenting...`)
+  
+  // 意味的分割によるセグメント化
+  const segments = performSemanticSegmentation(transcript, maxTokensPerSegment)
+  
+  console.log(`✂️ Created ${segments.length} semantic segments`)
   return segments
 }
 
-// セグメント結果をマージする関数
-function mergeSegmentResults(results: any[]): {
-  meetingName: string
-  date: string
-  participants: string
-  agenda: string
-  mainPoints: string[]
-  decisions: string
-  todos: string
-  nextMeeting?: string
-  meetingDetails?: string
-} {
-  if (results.length === 0) {
-    return {
-      meetingName: "会議",
-      date: "不明",
-      participants: "不明",
-      agenda: "不明",
-      mainPoints: ["議事内容を抽出できませんでした"],
-      decisions: "特になし",
-      todos: "特になし",
-      nextMeeting: "未定",
-      meetingDetails: "",
-    }
-  }
-
-  // 最初のセグメントから基本情報を取得
-  const meetingName = results[0].meetingName
-  const date = results[0].date
-
-  // 参加者を全セグメントからマージ（重複を除去）
-  const allParticipants = new Set<string>()
-  results.forEach((result) => {
-    const participants = result.participants.split(/[、,、]/).map((p: string) => p.trim())
-    participants.forEach((p: string) => {
-      if (p && p !== "不明") {
-        allParticipants.add(p)
+// 意味的分割
+function performSemanticSegmentation(transcript: string, maxTokensPerSegment: number): string[] {
+  const maxCharsPerSegment = Math.floor(maxTokensPerSegment / 1.3)
+  
+  // まず大きな話題区切りで分割を試行
+  let segments = transcript.split(/\n\s*\n/).filter(s => s.trim().length > 10)
+  
+  // セグメントが長すぎる場合は更に分割
+  const finalSegments: string[] = []
+  
+  for (const segment of segments) {
+    if (segment.length <= maxCharsPerSegment) {
+      finalSegments.push(segment)
+    } else {
+      // 長すぎるセグメントを文単位で分割
+      const sentences = segment.split(/[。！？\n]/).filter(s => s.trim().length > 3)
+      
+      let currentSegment = ''
+      for (const sentence of sentences) {
+        const testSegment = currentSegment + sentence + '。'
+        
+        if (testSegment.length <= maxCharsPerSegment) {
+          currentSegment = testSegment
+        } else {
+          if (currentSegment) {
+            finalSegments.push(currentSegment)
+          }
+          currentSegment = sentence + '。'
+        }
       }
-    })
-  })
-  const participants = Array.from(allParticipants).join("、")
-
-  // 議題/目的を最初のセグメントから取得
-  const agenda = results[0].agenda
-
-  // 主な議論内容を全セグメントからマージ
-  const mainPoints: string[] = []
-  results.forEach((result, index) => {
-    // セグメント番号を追加（オプション）
-    if (results.length > 1) {
-      mainPoints.push(`【セグメント ${index + 1}】`)
+      
+      if (currentSegment) {
+        finalSegments.push(currentSegment)
+      }
     }
-
-    // 各セグメントの主要ポイントを追加
-    result.mainPoints.forEach((point: string) => {
-      mainPoints.push(point)
-    })
-  })
-
-  // 決定事項を全セグメントからマージ
-  const allDecisions = results.map((r) => r.decisions).filter((d) => d && d !== "特になし" && d !== "継続議論")
-  const decisions = allDecisions.length > 0 ? allDecisions.join("\n\n") : "継続議論"
-
-  // TODOを全セグメントからマージ
-  const allTodos = results.map((r) => r.todos).filter((t) => t && t !== "特になし")
-  const todos = allTodos.length > 0 ? allTodos.join("\n\n") : "特になし"
-
-  // 次回会議情報は最後のセグメントから取得
-  const nextMeeting = results[results.length - 1].nextMeeting
-
-  return {
-    meetingName,
-    date,
-    participants,
-    agenda,
-    mainPoints,
-    decisions,
-    todos,
-    nextMeeting,
-    meetingDetails: "",
   }
+  
+  // 空のセグメントを除去
+  return finalSegments.filter(s => s.trim().length > 10)
 }
 
-// 単一セグメントの議事録を生成する関数
-async function generateMinutesForSegment(
-  transcript: string,
-  apiKey: string,
+// マルチセグメント処理
+async function processMultipleSegments(
+  segments: string[], 
+  apiKey: string, 
+  userPrompt: string
+): Promise<any[]> {
+  console.log(`🔄 Processing ${segments.length} segments in parallel`)
+  
+  const results = []
+  
+  // 並列処理でパフォーマンス向上（ただしレート制限を考慮）
+  const batchSize = 3 // DeepSeek のレート制限を考慮
+  
+  for (let i = 0; i < segments.length; i += batchSize) {
+    const batch = segments.slice(i, i + batchSize)
+    const batchPromises = batch.map((segment, idx) => 
+      processSegmentWithRetry(segment, apiKey, userPrompt, i + idx + 1, segments.length)
+    )
+    
+    try {
+      const batchResults = await Promise.all(batchPromises)
+      results.push(...batchResults)
+      
+      // バッチ間の短い待機（レート制限対策）
+      if (i + batchSize < segments.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    } catch (error) {
+      console.error(`❌ Batch ${Math.floor(i / batchSize) + 1} failed:`, error)
+      // エラーが発生したバッチは個別処理
+      for (let j = 0; j < batch.length; j++) {
+        try {
+          const result = await processSegmentWithRetry(batch[j], apiKey, userPrompt, i + j + 1, segments.length)
+          results.push(result)
+        } catch (segmentError) {
+          console.error(`❌ Segment ${i + j + 1} failed:`, segmentError)
+          // エラーセグメントはスキップ
+        }
+      }
+    }
+  }
+  
+  return results
+}
+
+// セグメント処理（リトライ機能付き）
+async function processSegmentWithRetry(
+  segment: string, 
+  apiKey: string, 
   userPrompt: string,
-  segmentNumber?: number,
-  totalSegments?: number,
+  segmentNumber: number,
+  totalSegments: number
 ): Promise<{
   meetingName: string
   date: string
@@ -253,126 +181,419 @@ async function generateMinutesForSegment(
   nextMeeting?: string
   meetingDetails?: string
 }> {
-  // トークン数を概算（日本語の場合、1文字あたり約1.5トークンと仮定）
-  const estimatedTokens = Math.ceil(transcript.length * 1.5)
-  const maxTokens = 10000 // 安全マージンを取って10000トークンに制限
+  const maxRetries = 3
+  const retryDelays = [1000, 2000, 4000]
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Processing segment ${segmentNumber}/${totalSegments}, attempt ${attempt + 1}`)
+      
+      // 強化されたプロンプト構築
+      const enhancedPrompt = buildEnhancedSegmentPrompt(userPrompt, segment, segmentNumber, totalSegments)
+      
+      // API呼び出し
+      const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-v3",
+          messages: [
+            {
+              role: "system",
+              content: `あなたは議事録作成の専門家です。notta と同等の高品質な議事録を作成します。
 
-  let processedTranscript = transcript
+## 専門技能
+- 会議内容の構造的理解と整理
+- 重要ポイントの正確な抽出
+- アクションアイテムの明確化
+- 決定事項の的確な記録
 
-  if (estimatedTokens > maxTokens) {
-    console.log(
-      `Transcript segment is too long (estimated ${estimatedTokens} tokens). Truncating to approximately ${maxTokens} tokens.`,
-    )
+## 品質基準
+- 具体性と明確性を重視
+- 曖昧な表現は避ける
+- 推測は明示的に記載
+- 実行可能なアクションアイテムを作成`
+            },
+            {
+              role: "user",
+              content: enhancedPrompt
+            }
+          ],
+          temperature: 0.1, // 一貫性重視
+          max_tokens: 4096,
+          top_p: 0.8,
+          frequency_penalty: 0.1,
+          presence_penalty: 0.1
+        }),
+      })
 
-    // 文字数ベースで切り詰める（日本語の場合、1トークンあたり約0.67文字と仮定）
-    const maxChars = Math.floor(maxTokens / 1.5)
-    processedTranscript = processedTranscript.substring(0, maxChars)
-
-    // 最後の文が途中で切れないように調整
-    const lastSentenceBreak = processedTranscript.lastIndexOf("。")
-    if (lastSentenceBreak > 0) {
-      processedTranscript = processedTranscript.substring(0, lastSentenceBreak + 1)
-    }
-
-    // 切り詰めた旨を追加
-    processedTranscript += "\n\n（注：文字起こしが長すぎるため、一部のみを処理しています）"
-  }
-
-  // セグメント情報を追加（複数セグメントの場合）
-  let segmentInfo = ""
-  if (segmentNumber !== undefined && totalSegments !== undefined) {
-    segmentInfo = `\n\n【注意】これは長い会議の文字起こしを分割した第${segmentNumber}部分（全${totalSegments}部分）です。`
-  }
-
-  // ユーザー指定のプロンプトを使用
-  const fullPrompt = userPrompt + processedTranscript + segmentInfo
-  console.log("Full prompt for DeepSeek API:", fullPrompt.substring(0, 200) + "...")
-
-  try {
-    console.log("Using user-specified prompt for DeepSeek API")
-
-    // DeepSeek APIを呼び出す
-    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "deepseek-v3", // DeepSeek-V3モデルを指定
-        messages: [
-          {
-            role: "system",
-            content: "あなたは会議の議事録を作成する専門家です。プロフェッショナルで実用的な議事録を作成します。",
-          },
-          {
-            role: "user",
-            content: fullPrompt,
-          },
-        ],
-        temperature: 0.1, // 議事録の精度向上のため、より低い温度設定
-        max_tokens: 4096, // より詳細な議事録に対応
-        top_p: 0.8, // より一貫性のある出力を確保
-      }),
-    })
-
-    if (!response.ok) {
-      let errorData: any;
-      try {
-        errorData = await response.json()
-      } catch (parseError) {
-        console.error("Failed to parse DeepSeek error response:", parseError)
-        throw new Error(`DeepSeek API error: ${response.status} ${response.statusText} (エラー詳細の取得に失敗)`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        
+        // レート制限の特別処理
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After')
+          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : retryDelays[attempt] || 5000
+          
+          if (attempt < maxRetries) {
+            console.warn(`⏳ Rate limited on segment ${segmentNumber}, waiting ${waitTime}ms`)
+            await new Promise(resolve => setTimeout(resolve, waitTime))
+            continue
+          }
+        }
+        
+        throw new Error(`DeepSeek API error: ${response.status} ${response.statusText} - ${errorText}`)
       }
-      throw new Error(`DeepSeek API error: ${response.status} ${JSON.stringify(errorData)}`)
+
+      const data = await response.json()
+      
+      // レスポンス検証
+      if (!data.choices || !data.choices[0] || !data.choices[0].message || !data.choices[0].message.content) {
+        throw new Error("Invalid response structure from DeepSeek API")
+      }
+
+      const generatedText = data.choices[0].message.content
+      
+      if (!generatedText || generatedText.trim().length < 10) {
+        throw new Error("Generated text is too short or empty")
+      }
+
+      console.log(`📝 Segment ${segmentNumber} processed successfully`)
+      
+      // 高精度パース処理
+      const parsedMinutes = parseMinutesTextEnhanced(generatedText)
+      
+      // セグメント品質検証
+      validateSegmentQuality(parsedMinutes, segmentNumber)
+      
+      return parsedMinutes
+      
+    } catch (error) {
+      console.error(`❌ Segment ${segmentNumber} attempt ${attempt + 1} failed:`, error)
+      
+      if (attempt === maxRetries) {
+        throw error
+      }
+      
+      // リトライ前の待機
+      const waitTime = retryDelays[attempt] || 2000
+      console.log(`⏳ Waiting ${waitTime}ms before retry...`)
+      await new Promise(resolve => setTimeout(resolve, waitTime))
     }
-
-    // レスポンステキストの安全な取得
-    let responseText: string;
-    try {
-      responseText = await response.text()
-      console.log("DeepSeek API response text length:", responseText.length)
-    } catch (textError) {
-      console.error("Failed to read DeepSeek response text:", textError)
-      throw new Error(`DeepSeek APIレスポンステキストの読み取りに失敗: ${textError}`)
-    }
-
-    // 空のレスポンスチェック
-    if (!responseText || responseText.trim() === '') {
-      console.error("Empty response from DeepSeek API")
-      throw new Error("DeepSeek APIから空のレスポンスが返されました")
-    }
-
-    // JSON解析
-    let result: any;
-    try {
-      result = JSON.parse(responseText)
-    } catch (parseError) {
-      console.error("Failed to parse DeepSeek JSON response:", parseError)
-      console.error("DeepSeek response text:", responseText.substring(0, 1000))
-      throw new Error(`DeepSeek APIレスポンスのJSON解析に失敗: ${parseError}`)
-    }
-
-    // レスポンス構造の検証
-    if (!result.choices || !result.choices[0] || !result.choices[0].message || !result.choices[0].message.content) {
-      console.error("Unexpected DeepSeek API response structure:", result)
-      throw new Error("DeepSeek APIから予期しないレスポンス構造が返されました")
-    }
-
-    const text = result.choices[0].message.content
-    if (!text || typeof text !== 'string') {
-      console.error("Invalid text content in DeepSeek response:", text)
-      throw new Error("DeepSeek APIレスポンスに有効なテキストが含まれていません")
-    }
-
-    console.log("DeepSeek API response:", text.substring(0, 200) + "...")
-
-    // 議事録をパースして構造化
-    const parsedMinutes = parseMinutesText(text)
-    return parsedMinutes
-  } catch (error) {
-    console.error("DeepSeek API call error:", error)
-    // エラーが発生した場合は上位層でハンドリングするためにエラーを再スロー
-    throw new Error(`DeepSeek APIエラー: ${error instanceof Error ? error.message : String(error)}`)
   }
+  
+  throw new Error("Max retries exceeded")
+}
+
+// 強化されたセグメントプロンプト構築
+function buildEnhancedSegmentPrompt(
+  userPrompt: string, 
+  segment: string, 
+  segmentNumber: number, 
+  totalSegments: number
+): string {
+  let segmentContext = ""
+  
+  if (totalSegments > 1) {
+    segmentContext = `
+## セグメント処理情報
+- 現在のセグメント: ${segmentNumber}/${totalSegments}
+- 処理方針: このセグメントの内容を重点的に分析し、全体の文脈を考慮して議事録を作成
+
+## セグメント特化指示
+${segmentNumber === 1 ? "- 会議の開始部分として、基本情報（会議名、参加者、議題）を重点的に抽出" : ""}
+${segmentNumber === totalSegments ? "- 会議の終了部分として、決定事項、アクションアイテム、次回予定を重点的に抽出" : ""}
+${segmentNumber > 1 && segmentNumber < totalSegments ? "- 会議の中間部分として、議論内容と主要ポイントを重点的に抽出" : ""}
+`
+  }
+
+  return `${userPrompt}
+
+${segmentContext}
+
+## 出力品質保証
+以下の構造化されたフォーマットで返してください：
+
+**会議名**: [具体的で分かりやすい会議名]
+**開催日**: [抽出された日付情報]
+**参加者**: [特定された参加者名（役職があれば含める）]
+**議題**: [主要な討議内容]
+
+**主要ポイント**:
+1. [重要ポイント1]
+2. [重要ポイント2]
+3. [重要ポイント3]
+
+**決定事項**:
+[具体的な決定内容。決定されなかった場合は「継続議論」と記載]
+
+**アクションアイテム**:
+[実行すべき具体的なタスク。担当者・期限を含む。なければ「特になし」]
+
+**次回予定**:
+[次回会議の予定があれば記載]
+
+文字起こしデータ:
+${segment}`
+}
+
+// 高精度パース処理（DeepSeek用）
+function parseMinutesTextEnhanced(text: string): {
+  meetingName: string
+  date: string
+  participants: string
+  agenda: string
+  mainPoints: string[]
+  decisions: string
+  todos: string
+  nextMeeting?: string
+  meetingDetails?: string
+} {
+  try {
+    // 基本パーサーでまず試行
+    const basicResult = parseMinutesText(text)
+    
+    // DeepSeek特化の拡張パーシング
+    const lines = text.split('\n')
+    let enhancedResult = { ...basicResult }
+    
+    // より詳細なパターンマッチング
+    const patterns = {
+      meetingName: [/\*\*会議名\*\*[：:]\s*(.+)/i, /会議名[：:]\s*(.+)/i, /Meeting[：:]?\s*(.+)/i],
+      date: [/\*\*開催日\*\*[：:]\s*(.+)/i, /開催日[：:]\s*(.+)/i, /日時[：:]\s*(.+)/i],
+      participants: [/\*\*参加者\*\*[：:]\s*(.+)/i, /参加者[：:]\s*(.+)/i],
+      agenda: [/\*\*議題\*\*[：:]\s*(.+)/i, /議題[：:]\s*(.+)/i],
+      decisions: [/\*\*決定事項\*\*[：:]\s*(.+)/i, /決定事項[：:]\s*(.+)/i],
+      todos: [/\*\*アクションアイテム\*\*[：:]\s*(.+)/i, /アクションアイテム[：:]\s*(.+)/i, /TODO[：:]\s*(.+)/i],
+      nextMeeting: [/\*\*次回予定\*\*[：:]\s*(.+)/i, /次回[：:]\s*(.+)/i]
+    }
+    
+    // パターンマッチングによる抽出
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine) continue
+      
+      for (const [field, fieldPatterns] of Object.entries(patterns)) {
+        for (const pattern of fieldPatterns) {
+          const match = trimmedLine.match(pattern)
+          if (match && match[1]?.trim()) {
+            (enhancedResult as any)[field] = match[1].trim()
+            break
+          }
+        }
+      }
+    }
+    
+    // 主要ポイントの抽出改善
+    const mainPointsSection = text.match(/\*\*主要ポイント\*\*[：:]?\s*([\s\S]*?)(?:\*\*|$)/i)
+    if (mainPointsSection) {
+      const pointsText = mainPointsSection[1]
+      const points = pointsText
+        .split(/\n/)
+        .map(line => line.trim())
+        .filter(line => line.match(/^\d+\.\s*/) || line.match(/^[-•]\s*/))
+        .map(line => line.replace(/^\d+\.\s*|^[-•]\s*/, '').trim())
+        .filter(line => line.length > 0)
+      
+      if (points.length > 0) {
+        enhancedResult.mainPoints = points
+      }
+    }
+    
+    // 品質向上のための後処理
+    enhancedResult = enhanceSegmentResultQuality(enhancedResult)
+    
+    return enhancedResult
+    
+  } catch (error) {
+    console.warn("⚠️ Enhanced parsing failed, using basic parser:", error)
+    return parseMinutesText(text)
+  }
+}
+
+// セグメント結果品質向上
+function enhanceSegmentResultQuality(result: any): any {
+  // 空文字列を適切なデフォルト値に置換
+  if (!result.meetingName || result.meetingName.trim() === '') {
+    result.meetingName = '会議（タイトル未特定）'
+  }
+  
+  if (!result.date || result.date.trim() === '') {
+    result.date = '日時未特定'
+  }
+  
+  if (!result.participants || result.participants.trim() === '') {
+    result.participants = '参加者未特定'
+  }
+  
+  if (!result.agenda || result.agenda.trim() === '') {
+    result.agenda = '議題未特定'
+  }
+  
+  if (!result.decisions || result.decisions.trim() === '') {
+    result.decisions = '決定事項なし'
+  }
+  
+  if (!result.todos || result.todos.trim() === '') {
+    result.todos = 'アクションアイテムなし'
+  }
+  
+  // 主要ポイントの品質チェック
+  if (!result.mainPoints || !Array.isArray(result.mainPoints) || result.mainPoints.length === 0) {
+    result.mainPoints = ['主要ポイント未抽出']
+  }
+  
+  return result
+}
+
+// セグメント品質検証
+function validateSegmentQuality(minutes: any, segmentNumber: number): void {
+  console.log(`🔍 Validating segment ${segmentNumber} quality`)
+  
+  const requiredFields = ['meetingName', 'date', 'participants', 'agenda', 'mainPoints', 'decisions', 'todos']
+  const missingFields = []
+  
+  for (const field of requiredFields) {
+    if (!minutes[field] || 
+        (typeof minutes[field] === 'string' && minutes[field].trim() === '') ||
+        (Array.isArray(minutes[field]) && minutes[field].length === 0)) {
+      missingFields.push(field)
+    }
+  }
+  
+  if (missingFields.length > 0) {
+    console.warn(`⚠️ Segment ${segmentNumber} quality warning: missing fields: ${missingFields.join(', ')}`)
+  }
+  
+  console.log(`✅ Segment ${segmentNumber} quality validation completed`)
+}
+
+// セグメント結果マージ（高精度版）
+function mergeSegmentResults(results: any[]): {
+  meetingName: string
+  date: string
+  participants: string
+  agenda: string
+  mainPoints: string[]
+  decisions: string
+  todos: string
+  nextMeeting?: string
+  meetingDetails?: string
+} {
+  console.log(`🔗 Merging ${results.length} segment results`)
+  
+  if (results.length === 0) {
+    return {
+      meetingName: "会議（情報不足）",
+      date: "日時未特定",
+      participants: "参加者未特定",
+      agenda: "議題未特定",
+      mainPoints: ["議事内容を抽出できませんでした"],
+      decisions: "決定事項なし",
+      todos: "アクションアイテムなし",
+      nextMeeting: "次回予定なし",
+      meetingDetails: "",
+    }
+  }
+
+  // 最も情報が豊富なセグメントから基本情報を取得
+  const bestSegment = results.reduce((best, current) => {
+    const bestScore = scoreSegmentCompleteness(best)
+    const currentScore = scoreSegmentCompleteness(current)
+    return currentScore > bestScore ? current : best
+  })
+
+  // 参加者の統合（重複除去と正規化）
+  const allParticipants = new Set<string>()
+  results.forEach((result) => {
+    const participants = extractParticipants(result.participants)
+    participants.forEach((p: string) => allParticipants.add(p))
+  })
+
+  // 主要ポイントの統合（セグメント情報付き）
+  const mainPoints: string[] = []
+  results.forEach((result, index) => {
+    if (results.length > 1) {
+      mainPoints.push(`【第${index + 1}部分】`)
+    }
+    
+    if (Array.isArray(result.mainPoints)) {
+      result.mainPoints.forEach((point: string) => {
+        if (point && point.trim() !== '主要ポイント未抽出') {
+          mainPoints.push(point)
+        }
+      })
+    }
+  })
+
+  // 決定事項の統合
+  const allDecisions = results
+    .map((r) => r.decisions)
+    .filter((d) => d && d !== "決定事項なし" && d !== "継続議論" && d.trim() !== '')
+  
+  // TODOの統合
+  const allTodos = results
+    .map((r) => r.todos)
+    .filter((t) => t && t !== "アクションアイテムなし" && t.trim() !== '')
+
+  // 次回会議情報は最後のセグメントから優先的に取得
+  const nextMeeting = results
+    .slice()
+    .reverse()
+    .find(r => r.nextMeeting && r.nextMeeting !== "次回予定なし")?.nextMeeting || "次回予定なし"
+
+  const mergedResult = {
+    meetingName: bestSegment.meetingName,
+    date: bestSegment.date,
+    participants: Array.from(allParticipants).join("、") || "参加者未特定",
+    agenda: bestSegment.agenda,
+    mainPoints: mainPoints.length > 0 ? mainPoints : ["主要ポイント未抽出"],
+    decisions: allDecisions.length > 0 ? allDecisions.join("\n\n") : "決定事項なし",
+    todos: allTodos.length > 0 ? allTodos.join("\n\n") : "アクションアイテムなし",
+    nextMeeting,
+    meetingDetails: `${results.length}セグメントから統合生成`,
+  }
+
+  console.log("✅ Segment merging completed successfully")
+  return mergedResult
+}
+
+// セグメント完成度スコアリング
+function scoreSegmentCompleteness(segment: any): number {
+  let score = 0
+  
+  const fields = ['meetingName', 'date', 'participants', 'agenda', 'decisions', 'todos']
+  const defaultValues = ['会議（', '未特定', '未特定', '未特定', 'なし', 'なし']
+  
+  fields.forEach((field, index) => {
+    const value = segment[field] || ''
+    if (value && !value.includes(defaultValues[index])) {
+      score += 10
+    }
+  })
+  
+  // 主要ポイントの品質評価
+  if (Array.isArray(segment.mainPoints) && segment.mainPoints.length > 0) {
+    const validPoints = segment.mainPoints.filter((p: string) => 
+      p && p.trim() !== '主要ポイント未抽出'
+    )
+    score += validPoints.length * 5
+  }
+  
+  return score
+}
+
+// 参加者抽出の正規化
+function extractParticipants(participantsText: string): string[] {
+  if (!participantsText || participantsText === '参加者未特定') {
+    return []
+  }
+  
+  return participantsText
+    .split(/[、,、]/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0 && p !== '参加者未特定')
 }

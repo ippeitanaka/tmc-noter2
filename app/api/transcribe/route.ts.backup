@@ -184,6 +184,7 @@ export async function POST(request: NextRequest) {
 
     // Web Speech APIのみを使用（OpenAI APIは使用しない）
     console.log("🎤 Using Web Speech API for all transcription processing")
+    let openai = null; // OpenAI APIは使用しない
 
     let formData;
     try {
@@ -206,7 +207,7 @@ export async function POST(request: NextRequest) {
       includeTimestamps: formData.get("includeTimestamps") === "true",
       sentimentAnalysis: formData.get("sentimentAnalysis") === "true",
       language: (formData.get("language") as string) || "ja",
-      model: (formData.get("model") as string) || "webspeech"
+      model: (formData.get("model") as string) || "whisper-1"
     }
 
     // テキストのみ処理フラグの確認（AI拡張処理用）
@@ -224,6 +225,7 @@ export async function POST(request: NextRequest) {
       fileName: file.name,
       fileSize: file.size,
       fileType: file.type,
+      openaiAvailable: !!openai,
       textOnly: textOnly
     })
 
@@ -235,14 +237,14 @@ export async function POST(request: NextRequest) {
       const textContent = await file.text()
       console.log("Text content length:", textContent.length)
       
-      // AI拡張処理のみ実行（簡易版）
+      // AI拡張処理のみ実行
       let result: any = {
         transcript: textContent,
         success: true,
         textOnlyProcessing: true
       }
 
-      if (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) {
+      if ((options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) && openai) {
         try {
           console.log("Starting text-only enhancement processing...")
           const enhancedResult = await enhanceTranscription(textContent, options)
@@ -252,6 +254,8 @@ export async function POST(request: NextRequest) {
           console.error("Text-only enhancement error:", enhanceError)
           result.enhancementError = "AI拡張機能の処理中にエラーが発生しました"
         }
+      } else if (!openai && (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis)) {
+        result.enhancementWarning = "AI拡張機能を使用するにはOpenAI APIキーが必要です"
       }
 
       console.log("=== TEXT-ONLY TRANSCRIBE API SUCCESS ===")
@@ -303,6 +307,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // API提供者の設定を確認（Web Speech API固定）
+    const provider = "webspeech" // 常にWeb Speech APIを使用
+    console.log("🎯 Using Web Speech API for transcription")
+
     // Web Speech APIによる音声ファイル処理
     console.log("🎤 Processing with Web Speech API...")
     
@@ -310,31 +318,14 @@ export async function POST(request: NextRequest) {
       // Web Speech APIによる音声認識処理
       const webSpeechResult = await processAudioFileWithWebSpeech(file)
       
-      // 重複除去処理を適用
-      const cleanedTranscript = removeDuplicatesUltraEnhanced(webSpeechResult)
-      
-      let result: any = {
-        transcript: cleanedTranscript,
-        originalTranscript: webSpeechResult,
+      const result = {
+        transcript: webSpeechResult,
         success: true,
         provider: 'webspeech',
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type,
         message: "Web Speech API による文字起こし完了"
-      }
-
-      // 拡張機能の実行（簡易版）
-      if (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) {
-        try {
-          console.log("Starting enhancement processing...")
-          const enhancedResult = await enhanceTranscription(webSpeechResult, options)
-          result = { ...result, ...enhancedResult }
-          console.log("Enhancement completed successfully")
-        } catch (enhanceError) {
-          console.error("Enhancement error:", enhanceError)
-          result.enhancementError = "追加機能の処理中にエラーが発生しました"
-        }
       }
 
       console.log("✅ Web Speech API transcription completed")
@@ -347,7 +338,6 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
-
   } catch (error: any) {
     console.error("=== TRANSCRIBE API ERROR ===")
     console.error("Error details:", {
@@ -356,6 +346,63 @@ export async function POST(request: NextRequest) {
       code: error.code,
       stack: error.stack
     })
+
+    // OpenAI APIエラーの詳細処理
+    if (error?.status === 413 || error?.response?.status === 413) {
+      return NextResponse.json(
+        {
+          error: "ファイルサイズが大きすぎます",
+          details: "OpenAI APIの制限（25MB）を超えています。ファイルを圧縮してください。",
+          debug: { errorType: "size_limit", status: 413 }
+        },
+        { status: 413 },
+      )
+    }
+
+    if (error?.status === 400 || error?.response?.status === 400) {
+      return NextResponse.json(
+        {
+          error: "ファイル形式が無効です",
+          details: "対応している音声ファイル形式を使用してください。",
+          debug: { errorType: "invalid_format", status: 400 }
+        },
+        { status: 400 },
+      )
+    }
+
+    if (error?.status === 401 || error?.response?.status === 401) {
+      return NextResponse.json(
+        {
+          error: "認証エラー",
+          details: "OpenAI APIキーが無効です。",
+          debug: { errorType: "auth_error", status: 401 }
+        },
+        { status: 401 },
+      )
+    }
+
+    if (error?.status === 429 || error?.response?.status === 429) {
+      return NextResponse.json(
+        {
+          error: "レート制限",
+          details: "API利用制限に達しました。しばらく待ってから再試行してください。",
+          debug: { errorType: "rate_limit", status: 429 }
+        },
+        { status: 429 },
+      )
+    }
+
+    // ネットワークエラー
+    if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+      return NextResponse.json(
+        {
+          error: "ネットワークエラー",
+          details: "接続がタイムアウトしました。ファイルサイズを小さくして再試行してください。",
+          debug: { errorType: "network_error", code: error.code }
+        },
+        { status: 408 },
+      )
+    }
 
     // その他のエラー
     return NextResponse.json(
@@ -528,130 +575,216 @@ ${actions.slice(0, 2).map(action => `• ${action.slice(0, 50)}...`).join('\n') 
 
 // キーワード抽出（Web Speech API版 - 簡易）
 async function extractKeywords(transcript: string) {
-  console.log("🔍 Starting simple keyword extraction...")
+  console.log("🔍 Starting keyword extraction...")
+  console.log("Input transcript length:", transcript.length)
   
-  // 日本語キーワード抽出（正規表現ベース）
-  const people = transcript.match(/[一-龯]{2,4}(さん|先生|様|氏|部長|課長|主任)/g) || []
-  const dates = transcript.match(/[0-9]{1,2}月[0-9]{1,2}日|来月|来週|今月|今週/g) || []
-  const numbers = transcript.match(/[0-9]+[人件個台回分]/g) || []
-  const places = transcript.match(/(会議室|教室|事務所|図書館|体育館)[A-Z0-9]*/g) || []
+  // 元のテキストから直接キーワードを抽出
+  let keywordText = transcript.trim()
   
-  const result = `## 🏷️ 抽出キーワード
+  if (transcript.length > 3000) {
+    console.log("📏 Long transcript detected, extracting keyword-rich content...")
+    
+    // 具体的な情報を含む文を抽出
+    const sentences = transcript.split(/[。．!！?？\n]/)
+    const keywordRichSentences = sentences.filter(sentence => {
+      const trimmed = sentence.trim()
+      if (trimmed.length < 8) return false
+      
+      // 具体的な情報パターンをチェック
+      const hasSpecificInfo = (
+        /[0-9]+[年月日時分]|[0-9]+期|[0-9]+人|[0-9]+回|[0-9]+万|[0-9]+円/.test(trimmed) || // 数値情報
+        /[A-Z]{2,}|JTSC|コモン|図書室|新谷|井上|竹原|掛川/.test(trimmed) || // 固有名詞
+        /学生|授業|試験|卒業|就職|保護者|先生|会議|報告|連絡|相談|問題|対応/.test(trimmed) // 重要語
+      )
+      
+      return hasSpecificInfo
+    })
+    
+    console.log("Keyword-rich sentences found:", keywordRichSentences.length)
+    keywordText = keywordRichSentences.slice(0, 12).join('。') + '。'
+  }
 
-**👥 人物・組織**
-${people.slice(0, 5).map(p => `• ${p}`).join('\n') || '• 参加者情報が検出されませんでした'}
+  const prompt = `
+以下は学校の会議や業務報告の音声文字起こしです。
+実際に言及されている具体的なキーワードを体系的に抽出してください。
+
+【文字起こしテキスト】
+${keywordText}
+
+【抽出指示】
+- 実際にテキスト中に登場する具体的な単語のみを抽出
+- 推測や補完はせず、明確に言及されているもののみ
+- カテゴリ別に整理して出力
+
+【出力形式】
+## 🏷️ 抽出キーワード
+
+**� 人物・組織**
+• [実際に名前が出た人物]
+• [実際に言及された組織・部署]
 
 **📚 学事・業務**
-• 会議・打ち合わせ
-• 報告・連絡事項
-• 業務進捗確認
+• [具体的な授業・業務内容]
+• [試験・イベント名]
 
 **📅 日時・スケジュール**  
-${dates.slice(0, 3).map(d => `• ${d}`).join('\n') || '• 具体的な日程は継続検討'}
+• [具体的な日付・時期]
+• [期限・スケジュール]
 
 **🏢 場所・施設**
-${places.slice(0, 3).map(p => `• ${p}`).join('\n') || '• 会議室・打ち合わせ場所'}
+• [具体的な場所名]
+• [施設・設備名]
 
 **🔧 制度・システム**
-• 業務プロセス
-• 連絡体制
-• 情報共有システム
+• [制度名・システム名]
+• [手続き・プロセス]
 
-**🔢 数値・データ**
-${numbers.slice(0, 3).map(n => `• ${n}`).join('\n') || '• 具体的な数値データなし'}
+**� 数値・データ**
+• [人数・金額・期数など]
+• [統計・実績データ]
 
 **⚠️ 課題・問題**
-• 継続検討事項
-• 調整が必要な案件`
+• [具体的な問題内容]
+• [懸念事項]
+`
 
-  console.log("✅ Simple keyword extraction completed")
-  return result
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 2000,
+    })
+
+    const result = response.choices[0].message.content
+    console.log("✅ Keyword extraction completed with", result?.length || 0, "characters")
+    return result
+  } catch (error) {
+    console.error("❌ Keyword extraction failed:", error)
+    return "キーワード抽出中にエラーが発生しました: " + (error instanceof Error ? error.message : String(error))
+  }
 }
 
-// 感情分析（Web Speech API版 - 簡易）
-async function analyzeSentiment(transcript: string) {
-  console.log("🎭 Starting simple sentiment analysis...")
+// 感情分析
+async function analyzeSentiment(transcript: string, openai: OpenAI) {
+  console.log("🎭 Starting sentiment analysis...")
+  console.log("Input transcript length:", transcript.length)
   
-  // 感情表現の検出
-  const positive = transcript.match(/ありがと|感謝|良い|順調|成功|達成|満足|安心|嬉しい|楽し/g) || []
-  const negative = transcript.match(/問題|困っ|心配|大変|失敗|遅れ|不安|厳しい|難しい|課題/g) || []
-  const neutral = transcript.match(/検討|確認|報告|連絡|相談|調整|準備|計画|予定|会議/g) || []
+  // 感情表現を含む部分を特定
+  let sentimentText = transcript.trim()
   
-  let tone = "中立"
-  let intensity = "普通"
-  
-  if (positive.length > negative.length + 2) {
-    tone = "ポジティブ"
-    intensity = positive.length > 5 ? "強い" : "普通"
-  } else if (negative.length > positive.length + 2) {
-    tone = "ネガティブ"  
-    intensity = negative.length > 5 ? "強い" : "普通"
+  if (transcript.length > 2500) {
+    console.log("📏 Long transcript detected, focusing on emotional and interpersonal content...")
+    
+    const sentences = transcript.split(/[。．!！?？\n]/)
+    const emotionalSentences = sentences.filter(sentence => {
+      const trimmed = sentence.trim()
+      if (trimmed.length < 8) return false
+      
+      // 感情的・対人的な表現をより広く検出
+      const hasEmotionalContent = (
+        /ありがた|感謝|心配|怖い|嬉しい|大変|困っ|問題|良い|悪い|すごい|びっくり|安心|不安|満足|不満/.test(trimmed) ||
+        /クレーム|苦情|相談|お疲れ|すみません|申し訳|恐縮|助か|迷惑|負担|ストレス/.test(trimmed) ||
+        /頑張|努力|協力|支援|サポート|改善|向上|成長|達成|成功|失敗|挫折/.test(trimmed) ||
+        /忙し|疲れ|辛い|楽し|面白|つまら|退屈|興味|関心|やる気|モチベーション/.test(trimmed)
+      )
+      
+      return hasEmotionalContent
+    })
+    
+    console.log("Emotional sentences found:", emotionalSentences.length)
+    
+    if (emotionalSentences.length > 0) {
+      sentimentText = emotionalSentences.slice(0, 10).join('。') + '。'
+    } else {
+      // フォールバック：対話的な部分を抽出
+      const dialogueSentences = sentences.filter(s => 
+        /はい|ええ|そうです|そうですね|なるほど|そういうこと|分かりました|了解|承知/.test(s)
+      )
+      sentimentText = dialogueSentences.slice(0, 8).join('。') + '。'
+    }
   }
-  
-  const result = `## 🎭 感情・雰囲気分析
 
-**😊 全体的な感情トーン**
-${tone} - 強度: ${intensity}
-[検出された表現: ${[...positive, ...negative].slice(0, 3).join(', ')}]
+  const prompt = `
+以下は学校の会議や業務報告の音声文字起こしです。
+発言者の感情、関係性、会議の雰囲気を詳細に分析してください。
 
-**💭 感情的な発言・反応**
-• ポジティブ表現: ${positive.length}件
-• ネガティブ表現: ${negative.length}件  
-• 中立的表現: ${neutral.length}件
+【文字起こしテキスト】
+${sentimentText}
+
+【分析指示】
+1. 実際の発言から読み取れる感情的要素を具体的に分析
+2. 参加者同士の関係性や相互作用を観察
+3. 会議全体の雰囲気や進行の様子を評価
+4. ストレス要因や課題に関する感情的反応を特定
+
+【出力形式】
+## 🎭 感情・雰囲気分析
+
+**� 全体的な感情トーン**
+[ポジティブ/ネガティブ/中立] - 強度: [弱い/普通/強い]
+[具体的な根拠となる発言や表現]
+
+**� 感情的な発言・反応**
+• [発言内容]: [背景・文脈の説明]
+• [発言内容]: [背景・文脈の説明]
+• [発言内容]: [背景・文脈の説明]
 
 **🤝 参加者の関係性**
-業務的で協力的な関係性が感じられます。
+[上下関係、協力関係、対立関係などの観察結果]
 
 **🌡️ 会議の雰囲気**
-${tone === "ポジティブ" ? "建設的で前向きな" : tone === "ネガティブ" ? "課題解決に集中した" : "業務的で中立的な"}雰囲気で進行されています。
+[進行の様子、積極性、建設性、緊張感などの特徴]
 
 **⚠️ 注意すべき感情的要素**
-• ${negative.length > 3 ? "課題や問題への懸念が複数表明されています" : "特に大きな懸念は見られません"}
+• [ストレス・不安の兆候]
+• [課題・問題に対する反応]
+• [改善が必要な点]
 
 **✨ ポジティブな要素**
-• ${positive.length > 0 ? "協力的で建設的な態度が見られます" : "業務的で効率的な進行が行われています"}`
+• [協力的な態度]
+• [建設的な提案]
+• [達成感・満足感の表現]
+`
 
-  console.log("✅ Simple sentiment analysis completed")
-  return result
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 2000,
+    })
+
+    const result = response.choices[0].message.content
+    console.log("✅ Sentiment analysis completed with", result?.length || 0, "characters")
+    return result
+  } catch (error) {
+    console.error("❌ Sentiment analysis failed:", error)
+    return "感情分析中にエラーが発生しました: " + (error instanceof Error ? error.message : String(error))
+  }
 }
 
-// 文章構造化（Web Speech API版 - 簡易）
-async function structureTranscript(transcript: string) {
-  console.log("📋 Starting simple text structuring...")
+// 文章構造化
+async function structureTranscript(transcript: string, openai: OpenAI) {
+  const prompt = `
+  以下の文字起こしテキストを読みやすく構造化してください。
   
-  // 簡易的な構造化
-  const sentences = transcript.split(/[。．!！?？\n]/).filter(s => s.trim().length > 5)
-  const paragraphs: string[] = []
-  let currentParagraph: string[] = []
-  
-  sentences.forEach((sentence, index) => {
-    currentParagraph.push(sentence.trim())
-    
-    // 5文ごと、または話題転換キーワードで段落を区切る
-    if (currentParagraph.length >= 5 || 
-        /それでは|次に|続いて|最後に|以上|まとめ/.test(sentence)) {
-      if (currentParagraph.length > 0) {
-        paragraphs.push(currentParagraph.join('。') + '。')
-        currentParagraph = []
-      }
-    }
+  構造化の方針：
+  1. 適切な段落分割
+  2. 文章の整理（冗長な部分の削除）
+  3. 話題の区切りを明確に
+  4. 見出しの追加（必要に応じて）
+  5. 読みやすい文体に調整
+
+  テキスト：
+  ${transcript}
+  `
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
   })
-  
-  // 残りの文も追加
-  if (currentParagraph.length > 0) {
-    paragraphs.push(currentParagraph.join('。') + '。')
-  }
-  
-  const result = `## 📄 構造化された文字起こし
 
-${paragraphs.map((paragraph, index) => `
-**第${index + 1}段落**
-${paragraph}
-`).join('\n')}
-
----
-*この構造化は文章の流れに基づいて自動的に生成されています。*`
-
-  console.log("✅ Simple text structuring completed")
-  return result
+  return response.choices[0].message.content
 }

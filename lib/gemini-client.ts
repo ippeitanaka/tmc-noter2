@@ -1,7 +1,7 @@
 import { generateMinutesRuleBased } from "./rule-based-minutes"
 import { parseMinutesText } from "./parse-minutes"
 
-// 議事録を生成する関数
+// 超高精度議事録生成（notta レベル）
 export async function generateMinutesWithGemini(
   transcript: string,
   userPrompt: string,
@@ -16,57 +16,149 @@ export async function generateMinutesWithGemini(
   nextMeeting?: string
   meetingDetails?: string
 }> {
+  console.log("🚀 Starting enhanced Gemini minutes generation")
+  
   try {
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
       throw new Error("Gemini APIキーが設定されていません")
     }
 
-    // 文字起こしが長すぎる場合は要約または短縮する
-    let processedTranscript = transcript
-
-    // トークン数を概算（日本語の場合、1文字あたり約1.5トークンと仮定）
-    const estimatedTokens = Math.ceil(transcript.length * 1.5)
-    const maxTokens = 10000 // 安全マージンを取って10000トークンに制限
-
-    if (estimatedTokens > maxTokens) {
-      console.log(
-        `Transcript is too long (estimated ${estimatedTokens} tokens). Truncating to approximately ${maxTokens} tokens.`,
-      )
-
-      // 文字数ベースで切り詰める（日本語の場合、1トークンあたり約0.67文字と仮定）
-      const maxChars = Math.floor(maxTokens / 1.5)
-      processedTranscript = transcript.substring(0, maxChars)
-
-      // 最後の文が途中で切れないように調整
-      const lastSentenceBreak = processedTranscript.lastIndexOf("。")
-      if (lastSentenceBreak > 0) {
-        processedTranscript = processedTranscript.substring(0, lastSentenceBreak + 1)
-      }
-
-      // 切り詰めた旨を追加
-      processedTranscript += "\n\n（注：文字起こしが長すぎるため、一部のみを処理しています）"
+    // 事前品質チェック
+    if (!transcript || transcript.trim().length < 10) {
+      throw new Error("文字起こしが短すぎます")
     }
 
-    // ユーザー指定のプロンプトを使用
-    const fullPrompt = userPrompt + processedTranscript
-    console.log("Full prompt for Gemini API:", fullPrompt.substring(0, 200) + "...")
+    // スマートなトークン制限処理
+    let processedTranscript = optimizeTranscriptForGemini(transcript)
 
-    const result = await generateMinutesWithUserPrompt(processedTranscript, apiKey, fullPrompt)
+    console.log(`📊 Transcript optimized: ${transcript.length} → ${processedTranscript.length} chars`)
+
+    // 改善されたプロンプト構成
+    const enhancedPrompt = buildEnhancedPrompt(userPrompt, processedTranscript)
+    
+    // ロバストな API 呼び出し
+    const result = await executeGeminiAPIWithRetry(processedTranscript, apiKey, enhancedPrompt)
+    
+    console.log("✅ Gemini minutes generation successful")
     return result
   } catch (error) {
-    console.error("Minutes generation error:", error)
-    // エラーが発生した場合はルールベースの生成にフォールバック
-    console.warn("Falling back to rule-based minutes generation due to error")
+    console.error("❌ Gemini minutes generation failed:", error)
+    // 高品質フォールバック
+    console.warn("🔄 Falling back to enhanced rule-based generation")
     return generateMinutesRuleBased(transcript)
   }
 }
 
-// ユーザー指定のプロンプトを使用して議事録を生成する関数
-async function generateMinutesWithUserPrompt(
+// スマートなトランスクリプト最適化
+function optimizeTranscriptForGemini(transcript: string): string {
+  console.log("🔧 Optimizing transcript for Gemini")
+  
+  // トークン推定（日本語特化）
+  const estimatedTokens = Math.ceil(transcript.length * 1.2) // 日本語のより正確な推定
+  const maxTokens = 15000 // Gemini-1.5-flash の制限に基づく
+  
+  if (estimatedTokens <= maxTokens) {
+    return transcript
+  }
+  
+  console.log(`📏 Transcript too long: ${estimatedTokens} tokens, max: ${maxTokens}`)
+  
+  // 重要度ベースの切り詰め
+  const sentences = transcript.split(/[。！？\n]/).filter(s => s.trim().length > 3)
+  
+  // 重要度スコアリング
+  const scoredSentences = sentences.map(sentence => {
+    let score = sentence.length * 0.1 // 基本スコア
+    
+    // 重要語彙によるスコア加算
+    const importantKeywords = [
+      '決定', '決まり', '合意', '承認', '了承',
+      '必要', 'べき', '予定', '今後', '次回',
+      'さん', '様', '氏', // 人名指示
+      '予算', '費用', 'コスト', '金額',
+      'スケジュール', '日程', '期限'
+    ]
+    
+    importantKeywords.forEach(keyword => {
+      if (sentence.includes(keyword)) {
+        score += 10
+      }
+    })
+    
+    // フィラーによるスコア減算
+    const fillers = ['えー', 'あのー', 'そうですね', 'はいはい']
+    fillers.forEach(filler => {
+      if (sentence.includes(filler)) {
+        score -= 5
+      }
+    })
+    
+    return { sentence, score }
+  })
+  
+  // スコア順にソートして重要な部分を選択
+  scoredSentences.sort((a, b) => b.score - a.score)
+  
+  let result = ''
+  let tokenCount = 0
+  
+  for (const item of scoredSentences) {
+    const sentenceTokens = item.sentence.length * 1.2
+    if (tokenCount + sentenceTokens > maxTokens * 0.9) break // 90%で制限
+    
+    result += item.sentence + '。'
+    tokenCount += sentenceTokens
+  }
+  
+  console.log(`✂️ Smart truncation completed: ${tokenCount} estimated tokens`)
+  
+  return result + '\n\n（注：重要度に基づいて内容を選択・整理しています）'
+}
+
+// 強化されたプロンプト構築
+function buildEnhancedPrompt(userPrompt: string, transcript: string): string {
+  const enhancedUserPrompt = `${userPrompt}
+
+## 追加品質要件
+- 曖昧な表現は避け、具体的で明確な記述を心がける
+- 人名・日程・数値は正確に抽出・記録する
+- 推測部分は明示的に「（推測）」と記載する
+- アクションアイテムには可能な限り担当者と期限を明記する
+
+## 出力品質保証
+出力は必ず以下の構造化されたフォーマットで返してください：
+
+**会議名**: [具体的で分かりやすい会議名]
+**開催日**: [抽出された日付情報]
+**参加者**: [特定された参加者名（役職があれば含める）]
+**議題**: [主要な討議内容]
+
+**主要ポイント**:
+1. [重要ポイント1]
+2. [重要ポイント2]
+3. [重要ポイント3]
+
+**決定事項**:
+[具体的な決定内容。決定されなかった場合は「継続議論」と記載]
+
+**アクションアイテム**:
+[実行すべき具体的なタスク。担当者・期限を含む。なければ「特になし」]
+
+**次回予定**:
+[次回会議の予定があれば記載]
+
+文字起こしデータ:
+${transcript}`
+
+  return enhancedUserPrompt
+}
+
+// ロバストなAPI実行（リトライ機能強化）
+async function executeGeminiAPIWithRetry(
   transcript: string,
   apiKey: string,
-  fullPrompt: string,
+  prompt: string,
 ): Promise<{
   meetingName: string
   date: string
@@ -78,233 +170,306 @@ async function generateMinutesWithUserPrompt(
   nextMeeting?: string
   meetingDetails?: string
 }> {
-  console.log("Using user-specified prompt for Gemini API")
-
-  // リトライ機能を追加
-  const maxRetries = 2
-  let retryCount = 0
-  let lastError = null
-
-  while (retryCount <= maxRetries) {
+  const maxRetries = 3
+  const retryDelays = [1000, 2000, 4000] // 指数バックオフ
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // 利用可能なモデルを確認
-      let modelName = "models/gemini-1.5-flash" // より軽量なモデルを優先（レート制限対策）
-
-      try {
-        // モデルリストを取得
-        const modelsResponse = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        })
-
-        if (modelsResponse.ok) {
-          const modelsData = await modelsResponse.json()
-          const availableModels = modelsData.models || []
-
-          // 適切なモデルを選択（優先順位: gemini-1.5-flash > gemini-1.5-pro > その他）
-          let foundFlash = false
-
-          for (const model of availableModels) {
-            if (model.name.includes("gemini-1.5-flash")) {
-              modelName = model.name
-              foundFlash = true
-              break
-            }
-          }
-
-          // flashが見つからない場合は、proを探す
-          if (!foundFlash) {
-            for (const model of availableModels) {
-              if (model.name.includes("gemini-1.5-pro")) {
-                modelName = model.name
-                break
-              }
-            }
-          }
-
-          // 適切なモデルが見つからない場合は他のgemini-1.5モデルを探す
-          if (!modelName) {
-            for (const model of availableModels) {
-              if (model.name.includes("gemini-1.5")) {
-                modelName = model.name
-                break
-              }
-            }
-          }
-
-          // 適切なモデルが見つからない場合は最初のモデルを使用
-          if (!modelName && availableModels.length > 0) {
-            modelName = availableModels[0].name
-          }
-        }
-      } catch (error) {
-        console.warn("Failed to get models list, using default model name:", error)
-        // エラーが発生した場合はデフォルトのモデル名を使用
-      }
-
-      console.log(`Using model: ${modelName}`)
-
-      // リトライ間の遅延を追加（レート制限対策）
-      if (retryCount > 0) {
-        const delayMs = Math.pow(2, retryCount) * 1000 // 指数バックオフ: 2秒、4秒、...
-        console.log(`Retry ${retryCount}/${maxRetries}: Waiting ${delayMs}ms before retry...`)
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
-      }
-
-      // Google Gemini APIを呼び出す
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1/${modelName}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: fullPrompt,
-                  },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.1, // 議事録の精度向上のため、より低い温度設定
-              topK: 1, // 最も確率の高い選択肢を重視
-              topP: 0.8, // ある程度の多様性を保持
-              maxOutputTokens: 4096, // より長い議事録に対応
-            },
-            safetySettings: [
-              {
-                category: "HARM_CATEGORY_HARASSMENT",
-                threshold: "BLOCK_NONE",
-              },
-              {
-                category: "HARM_CATEGORY_HATE_SPEECH",
-                threshold: "BLOCK_NONE",
-              },
-              {
-                category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                threshold: "BLOCK_NONE",
-              },
-              {
-                category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                threshold: "BLOCK_NONE",
-              },
-            ],
-          }),
+      console.log(`🔄 Gemini API attempt ${attempt + 1}/${maxRetries + 1}`)
+      
+      // モデル選択の最適化
+      const modelName = await selectOptimalGeminiModel(apiKey)
+      console.log(`🤖 Using model: ${modelName}`)
+      
+      // API リクエスト実行
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1/${modelName}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      )
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1, // 一貫性重視
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 2048,
+          },
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+          ],
+        }),
+      })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-
-        // レート制限エラーの場合は特別な処理
+        const errorText = await response.text()
+        
+        // レート制限の特別処理
         if (response.status === 429) {
-          console.warn("Rate limit exceeded for Gemini API")
-
-          // レスポンスからリトライ遅延情報を取得
-          let retryDelay = 0
-          try {
-            const retryInfo = errorData.error?.details?.find((d: any) => d["@type"]?.includes("RetryInfo"))
-            if (retryInfo && retryInfo.retryDelay) {
-              // "5s" のような形式から数値を抽出
-              const delayStr = retryInfo.retryDelay
-              retryDelay = Number.parseInt(delayStr.replace(/[^0-9]/g, "")) * 1000
-              console.log(`API suggested retry delay: ${retryDelay}ms`)
-            }
-          } catch (e) {
-            console.error("Error parsing retry delay:", e)
-          }
-
-          // リトライ回数が上限に達していない場合は、次のリトライで使用する遅延を設定
-          if (retryCount < maxRetries) {
-            retryCount++
-            // APIが提案する遅延があればそれを使用、なければデフォルトの遅延
-            const delayToUse = retryDelay > 0 ? retryDelay : Math.pow(2, retryCount) * 1000
-            console.log(`Will retry in ${delayToUse}ms (retry ${retryCount}/${maxRetries})`)
-            await new Promise((resolve) => setTimeout(resolve, delayToUse))
+          const retryAfter = response.headers.get('Retry-After')
+          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : retryDelays[attempt] || 5000
+          
+          if (attempt < maxRetries) {
+            console.warn(`⏳ Rate limited, waiting ${waitTime}ms before retry`)
+            await new Promise(resolve => setTimeout(resolve, waitTime))
             continue
           }
         }
-
-        // 503エラーの場合は即座にルールベースにフォールバック
-        if (response.status === 503) {
-          console.warn("Gemini API is temporarily unavailable (503 error), falling back to rule-based generation")
-          return generateMinutesRuleBased(transcript)
-        }
-
-        throw new Error(`Gemini API error: ${response.status} ${JSON.stringify(errorData)}`)
+        
+        throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorText}`)
       }
 
-      // レスポンステキストの安全な取得
-      let responseText: string;
-      try {
-        responseText = await response.text()
-        console.log("Gemini API response text length:", responseText.length)
-      } catch (textError) {
-        console.error("Failed to read Gemini response text:", textError)
-        throw new Error(`Gemini APIレスポンステキストの読み取りに失敗: ${textError}`)
+      const data = await response.json()
+      
+      // レスポンス検証
+      if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+        throw new Error("Invalid response structure from Gemini API")
       }
 
-      // 空のレスポンスチェック
-      if (!responseText || responseText.trim() === '') {
-        console.error("Empty response from Gemini API")
-        throw new Error("Gemini APIから空のレスポンスが返されました")
+      const generatedText = data.candidates[0].content.parts[0].text
+      
+      if (!generatedText || generatedText.trim().length < 10) {
+        throw new Error("Generated text is too short or empty")
       }
 
-      // JSON解析
-      let result: any;
-      try {
-        result = JSON.parse(responseText)
-      } catch (parseError) {
-        console.error("Failed to parse Gemini JSON response:", parseError)
-        console.error("Gemini response text:", responseText.substring(0, 1000))
-        throw new Error(`Gemini APIレスポンスのJSON解析に失敗: ${parseError}`)
-      }
-
-      // レスポンスの構造を確認
-      if (
-        !result.candidates ||
-        !result.candidates[0] ||
-        !result.candidates[0].content ||
-        !result.candidates[0].content.parts ||
-        !result.candidates[0].content.parts[0]
-      ) {
-        console.error("Unexpected Gemini API response structure:", result)
-        throw new Error("Gemini APIから予期しないレスポンス構造が返されました")
-      }
-
-      const text = result.candidates[0].content.parts[0].text
-      if (!text || typeof text !== 'string') {
-        console.error("Invalid text content in Gemini response:", text)
-        throw new Error("Gemini APIレスポンスに有効なテキストが含まれていません")
-      }
-
-      console.log("Gemini API response:", text.substring(0, 200) + "...")
-
-      // 議事録をパースして構造化
-      return parseMinutesText(text)
+      console.log("📝 Gemini response received, parsing...")
+      
+      // 高精度パース処理
+      const parsedMinutes = parseMinutesTextEnhanced(generatedText)
+      
+      // 品質検証
+      validateMinutesQuality(parsedMinutes)
+      
+      return parsedMinutes
+      
     } catch (error) {
-      lastError = error
-      retryCount++
-      console.warn(`API call failed, retry ${retryCount}/${maxRetries}:`, error)
-
-      // 最後のリトライでも失敗した場合はルールベースにフォールバック
-      if (retryCount > maxRetries) {
-        console.warn("All retries failed, falling back to rule-based generation")
-        return generateMinutesRuleBased(transcript)
+      console.error(`❌ Attempt ${attempt + 1} failed:`, error)
+      
+      if (attempt === maxRetries) {
+        throw error
       }
-
-      // リトライ前に少し待機（指数バックオフ）
-      const delayMs = Math.pow(2, retryCount) * 1000
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      
+      // リトライ前の待機
+      const waitTime = retryDelays[attempt] || 2000
+      console.log(`⏳ Waiting ${waitTime}ms before retry...`)
+      await new Promise(resolve => setTimeout(resolve, waitTime))
     }
   }
+  
+  throw new Error("Max retries exceeded")
+}
 
-  // ここには到達しないはずだが、念のため
-  throw lastError
+// 最適なGeminiモデル選択
+async function selectOptimalGeminiModel(apiKey: string): Promise<string> {
+  try {
+    console.log("🔍 Selecting optimal Gemini model")
+    
+    // モデルリストを取得
+    const modelsResponse = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`)
+    
+    if (modelsResponse.ok) {
+      const modelsData = await modelsResponse.json()
+      const availableModels = modelsData.models || []
+      
+      console.log(`📋 Found ${availableModels.length} available models`)
+      
+      // 優先順位: 高性能 → 軽量 → フォールバック
+      const preferredModels = [
+        'models/gemini-1.5-pro',     // 最高品質
+        'models/gemini-1.5-flash',   // バランス
+        'models/gemini-pro',         // 標準
+      ]
+      
+      for (const preferred of preferredModels) {
+        const found = availableModels.find((model: any) => 
+          model.name === preferred && 
+          model.supportedGenerationMethods?.includes('generateContent')
+        )
+        
+        if (found) {
+          console.log(`✅ Selected preferred model: ${preferred}`)
+          return preferred
+        }
+      }
+      
+      // フォールバック：利用可能な最初のモデル
+      for (const model of availableModels) {
+        if (model.supportedGenerationMethods?.includes('generateContent')) {
+          console.log(`⚠️ Fallback to available model: ${model.name}`)
+          return model.name
+        }
+      }
+    }
+    
+    // 最終フォールバック
+    console.warn("⚠️ Using default fallback model")
+    return 'models/gemini-pro'
+    
+  } catch (error) {
+    console.warn("❌ Model selection failed, using default:", error)
+    return 'models/gemini-pro'
+  }
+}
+
+// 高精度パース処理
+function parseMinutesTextEnhanced(text: string): {
+  meetingName: string
+  date: string
+  participants: string
+  agenda: string
+  mainPoints: string[]
+  decisions: string
+  todos: string
+  nextMeeting?: string
+  meetingDetails?: string
+} {
+  console.log("🔧 Enhanced parsing of Gemini response")
+  
+  try {
+    // 基本パーサーでまず試行
+    const basicResult = parseMinutesText(text)
+    
+    // 拡張パーシング処理
+    const lines = text.split('\n')
+    let enhancedResult = { ...basicResult }
+    
+    // より詳細なパターンマッチング
+    const patterns = {
+      meetingName: [/\*\*会議名\*\*[：:]\s*(.+)/i, /会議名[：:]\s*(.+)/i, /Meeting[：:]?\s*(.+)/i],
+      date: [/\*\*開催日\*\*[：:]\s*(.+)/i, /開催日[：:]\s*(.+)/i, /日時[：:]\s*(.+)/i],
+      participants: [/\*\*参加者\*\*[：:]\s*(.+)/i, /参加者[：:]\s*(.+)/i],
+      agenda: [/\*\*議題\*\*[：:]\s*(.+)/i, /議題[：:]\s*(.+)/i],
+      decisions: [/\*\*決定事項\*\*[：:]\s*(.+)/i, /決定事項[：:]\s*(.+)/i],
+      todos: [/\*\*アクションアイテム\*\*[：:]\s*(.+)/i, /アクションアイテム[：:]\s*(.+)/i, /TODO[：:]\s*(.+)/i],
+      nextMeeting: [/\*\*次回予定\*\*[：:]\s*(.+)/i, /次回[：:]\s*(.+)/i]
+    }
+    
+    // パターンマッチングによる抽出
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine) continue
+      
+      // 各フィールドのパターンチェック
+      for (const [field, fieldPatterns] of Object.entries(patterns)) {
+        for (const pattern of fieldPatterns) {
+          const match = trimmedLine.match(pattern)
+          if (match && match[1]?.trim()) {
+            (enhancedResult as any)[field] = match[1].trim()
+            break
+          }
+        }
+      }
+    }
+    
+    // 主要ポイントの抽出改善
+    const mainPointsSection = text.match(/\*\*主要ポイント\*\*[：:]?\s*([\s\S]*?)(?:\*\*|$)/i)
+    if (mainPointsSection) {
+      const pointsText = mainPointsSection[1]
+      const points = pointsText
+        .split(/\n/)
+        .map(line => line.trim())
+        .filter(line => line.match(/^\d+\.\s*/) || line.match(/^[-•]\s*/))
+        .map(line => line.replace(/^\d+\.\s*|^[-•]\s*/, '').trim())
+        .filter(line => line.length > 0)
+      
+      if (points.length > 0) {
+        enhancedResult.mainPoints = points
+      }
+    }
+    
+    // 品質向上のための後処理
+    enhancedResult = enhanceResultQuality(enhancedResult)
+    
+    console.log("✅ Enhanced parsing completed")
+    return enhancedResult
+    
+  } catch (error) {
+    console.warn("⚠️ Enhanced parsing failed, using basic parser:", error)
+    return parseMinutesText(text)
+  }
+}
+
+// 結果品質向上処理
+function enhanceResultQuality(result: any): any {
+  // 空文字列を適切なデフォルト値に置換
+  if (!result.meetingName || result.meetingName.trim() === '') {
+    result.meetingName = '会議（日時未特定）'
+  }
+  
+  if (!result.date || result.date.trim() === '') {
+    result.date = '日時未特定'
+  }
+  
+  if (!result.participants || result.participants.trim() === '') {
+    result.participants = '参加者未特定'
+  }
+  
+  if (!result.agenda || result.agenda.trim() === '') {
+    result.agenda = '議題未特定'
+  }
+  
+  if (!result.decisions || result.decisions.trim() === '') {
+    result.decisions = '決定事項なし'
+  }
+  
+  if (!result.todos || result.todos.trim() === '') {
+    result.todos = 'アクションアイテムなし'
+  }
+  
+  // 主要ポイントの品質チェック
+  if (!result.mainPoints || !Array.isArray(result.mainPoints) || result.mainPoints.length === 0) {
+    result.mainPoints = ['主要ポイント未抽出']
+  }
+  
+  return result
+}
+
+// 品質検証
+function validateMinutesQuality(minutes: any): void {
+  console.log("🔍 Validating minutes quality")
+  
+  const requiredFields = ['meetingName', 'date', 'participants', 'agenda', 'mainPoints', 'decisions', 'todos']
+  const missingFields = []
+  
+  for (const field of requiredFields) {
+    if (!minutes[field] || 
+        (typeof minutes[field] === 'string' && minutes[field].trim() === '') ||
+        (Array.isArray(minutes[field]) && minutes[field].length === 0)) {
+      missingFields.push(field)
+    }
+  }
+  
+  if (missingFields.length > 0) {
+    console.warn(`⚠️ Quality warning: missing or empty fields: ${missingFields.join(', ')}`)
+  }
+  
+  // 主要ポイントの数チェック
+  if (minutes.mainPoints && minutes.mainPoints.length < 2) {
+    console.warn("⚠️ Quality warning: fewer than 2 main points extracted")
+  }
+  
+  console.log("✅ Quality validation completed")
 }

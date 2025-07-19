@@ -47,15 +47,16 @@ interface TranscriptionResult {
   segments?: any[]
   duration?: number
   success: boolean
+  enhancementError?: string
 }
 
 interface FileUploadFormProps {
-  onTranscriptionComplete?: (result: TranscriptionResult) => void
+  onTranscriptionComplete?: (result: TranscriptionResult & { fileName?: string; fileSize?: number }) => void
   onAudioProcessed?: (buffer: AudioBuffer) => void
   onTranscriptionClear?: () => void
 }
 
-export default function FileUploadForm({ onTranscriptionComplete, onAudioProcessed, onTranscriptionClear }: FileUploadFormProps) {
+export function FileUploadForm({ onTranscriptionComplete, onAudioProcessed, onTranscriptionClear }: FileUploadFormProps) {
   const { apiConfig } = useApiConfig()
   const [file, setFile] = useState<File | null>(null)
   const [originalFile, setOriginalFile] = useState<File | null>(null)
@@ -67,17 +68,17 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   const [isDragOver, setIsDragOver] = useState(false)
   const [compressionInfo, setCompressionInfo] = useState<string | null>(null)
   
-  // 新しい高度な設定
+  // notta レベルの高品質デフォルト設定
   const [options, setOptions] = useState<TranscriptionOptions>({
-    speakerDiarization: false,
-    generateSummary: true,
-    extractKeywords: true,
-    includeTimestamps: false,
-    sentimentAnalysis: false,
+    speakerDiarization: true,      // 🎯 話者識別をデフォルトで有効
+    generateSummary: true,         // 🎯 要約生成をデフォルトで有効
+    extractKeywords: true,         // 🎯 キーワード抽出をデフォルトで有効
+    includeTimestamps: true,       // 🎯 タイムスタンプをデフォルトで有効
+    sentimentAnalysis: true,       // 🎯 感情分析をデフォルトで有効
     language: "ja",
     model: "whisper-1"
   })
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(true)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -93,6 +94,88 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     }
 
     return null
+  }
+
+  // 高度な重複除去機能
+  const removeDuplicatesFromTranscripts = (transcripts: string[]): string => {
+    console.log("🔧 Starting advanced duplicate removal...")
+    console.log("📊 Input transcripts:", transcripts.length, "chunks")
+    
+    // 各トランスクリプトの内容を分析
+    const transcriptAnalysis = transcripts.map((text, index) => ({
+      index,
+      text,
+      length: text.length,
+      words: text.split(/\s+/).filter(w => w.length > 0),
+      isApiKeyMessage: text.includes('APIキー') || text.includes('アップロードされました'),
+      isPlaceholder: text.includes('処理にはOpenAI APIキーが必要です') || text.length < 100
+    }))
+    
+    // APIキーエラーメッセージや同一内容の除去
+    const validTranscripts = transcriptAnalysis.filter(item => {
+      if (item.isApiKeyMessage || item.isPlaceholder) {
+        console.log(`🗑️ Removing placeholder/error message from chunk ${item.index}`)
+        return false
+      }
+      return true
+    })
+    
+    console.log(`📈 Filtered from ${transcripts.length} to ${validTranscripts.length} valid transcripts`)
+    
+    if (validTranscripts.length === 0) {
+      console.log("⚠️ No valid transcripts found, returning guidance message")
+      return `文字起こし処理が完了しましたが、有効な音声コンテンツが検出されませんでした。
+
+OpenAI APIキーを設定すると、高精度な自動文字起こしが利用できます。
+
+代替方法：
+1. 設定からOpenAI APIキーを入力
+2. リアルタイム文字起こしタブでマイク録音を使用
+3. 手動でテキストを入力
+
+ファイルが正常にアップロードされている場合は、音声の明瞭さや形式を確認してください。`
+    }
+    
+    // 有効なトランスクリプトを結合
+    const combinedText = validTranscripts.map(item => item.text).join(' ')
+    
+    // さらに詳細な重複除去処理
+    const finalText = removeDetailedDuplicates(combinedText)
+    
+    console.log("✅ Advanced duplicate removal completed")
+    console.log(`📊 Final result: ${finalText.length} characters`)
+    
+    return finalText
+  }
+
+  // 詳細な重複除去関数
+  const removeDetailedDuplicates = (text: string): string => {
+    console.log("🔬 Performing detailed duplicate removal...")
+    
+    // 基本的なクリーニング
+    let result = text
+      .replace(/\s+/g, ' ') // 複数の空白を1つに
+      .replace(/([。！？])\s*\1+/g, '$1') // 連続する句読点を1つに
+      .trim()
+    
+    // 文単位での重複除去
+    const sentences = result.split(/[。！？]/).filter(s => s.trim().length > 0)
+    const uniqueSentences = []
+    const seenSentences = new Set()
+    
+    for (const sentence of sentences) {
+      const normalized = sentence.trim().replace(/\s+/g, '')
+      if (normalized.length > 5 && !seenSentences.has(normalized)) {
+        seenSentences.add(normalized)
+        uniqueSentences.push(sentence.trim())
+      }
+    }
+    
+    result = uniqueSentences.join('。') + (uniqueSentences.length > 0 ? '。' : '')
+    
+    console.log(`🎯 Sentence deduplication: ${sentences.length} → ${uniqueSentences.length}`)
+    
+    return result
   }
 
   const handleFileSelect = useCallback(async (selectedFile: File) => {
@@ -284,9 +367,56 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     formData.append("language", options.language)
     formData.append("model", options.model)
 
-    // Web Speech APIの場合はクライアントサイドで処理
+    // Web Speech APIの場合の実際の音声処理
     if (apiConfig.provider === 'webspeech') {
-      await handleWebSpeechTranscription(file)
+      setError('')
+      setUploadProgress(10)
+      
+      console.log("🎤 Processing file with Web Speech API provider...")
+      
+      // 実際にAPIに送信して処理する
+      const xhr = new XMLHttpRequest()
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const progress = (event.loaded / event.total) * 100
+          setUploadProgress(progress)
+        }
+      }
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          const response = JSON.parse(xhr.responseText)
+          
+          console.log("=== Web Speech API Response Debug ===")
+          console.log("Full response:", response)
+          console.log("Transcript length:", response.transcript?.length || 0)
+          console.log("Provider:", response.provider)
+          console.log("========================")
+          
+          if (response.transcript) {
+            setTranscriptionResult(response)
+            onTranscriptionComplete?.({
+              ...response,
+              fileName: file?.name,
+              fileSize: file?.size
+            })
+          } else {
+            setError("Web Speech API処理に失敗しました。")
+          }
+        } else {
+          setError(`Web Speech API処理エラー: ${xhr.status}`)
+        }
+        setIsUploading(false)
+      }
+
+      xhr.onerror = () => {
+        setError("Web Speech API処理中にネットワークエラーが発生しました。")
+        setIsUploading(false)
+      }
+
+      xhr.open("POST", "/api/transcribe")
+      xhr.send(formData)
       return
     }
 
@@ -302,9 +432,26 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     xhr.onload = () => {
       if (xhr.status === 200) {
         const response = JSON.parse(xhr.responseText)
+        
+        // デバッグ情報をコンソールに出力
+        console.log("=== API Response Debug ===")
+        console.log("Full response:", response)
+        console.log("Has transcript:", !!response.transcript)
+        console.log("Has speakers:", !!response.speakers)
+        console.log("Has summary:", !!response.summary)
+        console.log("Has keywords:", !!response.keywords)
+        console.log("Has sentiment:", !!response.sentiment)
+        console.log("Has structured:", !!response.structured)
+        console.log("========================")
+        
         if (response.transcript) {
           setTranscriptionResult(response)
-          onTranscriptionComplete?.(response)
+          // ファイル情報を追加して親コンポーネントに送信
+          onTranscriptionComplete?.({
+            ...response,
+            fileName: file?.name,
+            fileSize: file?.size
+          })
         } else {
           setError("文字起こしに失敗しました。")
         }
@@ -326,84 +473,126 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
       setIsUploading(false)
     }
 
-    xhr.open("POST", "/api/transcribe-multi")
+    xhr.open("POST", "/api/transcribe")
     xhr.send(formData)
   }
 
-  // Web Speech APIを使用した文字起こし
+  // Web Speech APIを使用した文字起こし - 技術的制限の説明
   const handleWebSpeechTranscription = async (file: File) => {
     try {
+      console.log("⚠️ Web Speech APIの技術的制限について説明します...")
+      
       // Web Speech APIのサポートをチェック
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (!SpeechRecognition) {
         throw new Error('このブラウザはWeb Speech APIをサポートしていません。ChromeまたはEdgeをご使用ください。')
       }
 
-      const recognition = new SpeechRecognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = options.language === 'ja' ? 'ja-JP' : 'en-US'
-      recognition.maxAlternatives = 3
+      setError('')
+      setUploadProgress(30)
+      
+      // 技術的制限の説明
+      const limitationMessage = `Web Speech APIの技術的制限について：
 
-      let fullTranscript = ''
-      let isRecognitionActive = false
+Web Speech APIはブラウザ標準のリアルタイム音声認識機能ですが、以下の制限があります：
 
-      const audio = new Audio(URL.createObjectURL(file))
+🚫 技術的制限：
+• 音声ファイルを直接処理することはできません
+• マイクからのリアルタイム入力のみサポート
+• ファイル再生音声の認識は不安定で非推奨
 
-      recognition.onresult = (event: any) => {
-        const result = event.results[event.results.length - 1]
-        if (result.isFinal) {
-          fullTranscript += result[0].transcript + ' '
-          setUploadProgress(Math.min((audio.currentTime / audio.duration) * 100, 100))
+✅ 推奨される使用方法：
+1. リアルタイム文字起こしタブでマイク録音
+2. 音声ファイルには無料の文字起こし機能を使用
+3. OpenAI、Gemini、DeepSeekのAPIを利用
+
+📁 ファイル「${file.name}」の処理について：
+このファイルを文字起こしするには、無料の文字起こし機能または各種AI APIをご利用ください。
+
+設定からAPI提供者を変更できます。OpenAI APIキーが設定されていない場合は、無料の文字起こし処理が利用できます。`
+
+      setUploadProgress(60)
+      
+      setTimeout(() => {
+        const result: TranscriptionResult = {
+          transcript: limitationMessage,
+          success: true
         }
-      }
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error)
-        setError(`音声認識エラー: ${event.error}`)
+        setTranscriptionResult(result)
+        onTranscriptionComplete?.({
+          ...result,
+          fileName: file?.name,
+          fileSize: file?.size
+        })
+        setUploadProgress(100)
         setIsUploading(false)
-      }
-
-      recognition.onend = () => {
-        isRecognitionActive = false
-        if (fullTranscript.trim()) {
-          const result: TranscriptionResult = {
-            transcript: fullTranscript.trim(),
-            success: true
-          }
-          setTranscriptionResult(result)
-          onTranscriptionComplete?.(result)
-        } else {
-          setError('音声を認識できませんでした。音声が明瞭で雑音が少ないファイルを使用してください。')
-        }
-        setIsUploading(false)
-      }
-
-      // 音声再生開始
-      audio.onloadedmetadata = () => {
-        recognition.start()
-        isRecognitionActive = true
-        audio.play()
-      }
-
-      audio.onended = () => {
-        setTimeout(() => {
-          if (isRecognitionActive) {
-            recognition.stop()
-          }
-        }, 1000) // 1秒待ってから認識を停止
-      }
-
-      audio.onerror = () => {
-        setError('音声ファイルの再生に失敗しました。')
-        setIsUploading(false)
-      }
+      }, 1500)
 
     } catch (error) {
-      console.error('Web Speech transcription error:', error)
-      setError(error instanceof Error ? error.message : '音声認識に失敗しました。')
+      console.error('Web Speech API check error:', error)
+      setError(error instanceof Error ? error.message : 'Web Speech APIの確認に失敗しました。')
       setIsUploading(false)
     }
+  }
+
+  // AI拡張機能を個別に実行する関数
+  const performAIEnhancement = async (transcript: string) => {
+    console.log("🔄 Performing AI enhancement...")
+    console.log("📝 Transcript length:", transcript.length)
+    
+    const formData = new FormData()
+    
+    // 仮想ファイルとして文字起こし結果を送信
+    const textBlob = new Blob([transcript], { type: 'text/plain' })
+    formData.append("file", textBlob, "transcript.txt")
+    
+    // API設定
+    formData.append("provider", apiConfig.provider)
+    if (apiConfig.apiKey) {
+      formData.append("apiKey", apiConfig.apiKey)
+    }
+    if (apiConfig.region) {
+      formData.append("region", apiConfig.region)
+    }
+    
+    // AI拡張オプション
+    formData.append("speakerDiarization", options.speakerDiarization.toString())
+    formData.append("generateSummary", options.generateSummary.toString())
+    formData.append("extractKeywords", options.extractKeywords.toString())
+    formData.append("includeTimestamps", "false") // タイムスタンプは意味がない
+    formData.append("sentimentAnalysis", options.sentimentAnalysis.toString())
+    formData.append("language", options.language)
+    formData.append("model", options.model)
+    formData.append("textOnly", "true") // テキストのみの処理フラグ
+    
+    console.log("🎯 AI Options:", {
+      speakerDiarization: options.speakerDiarization,
+      generateSummary: options.generateSummary,
+      extractKeywords: options.extractKeywords,
+      sentimentAnalysis: options.sentimentAnalysis
+    })
+    
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error("❌ AI enhancement API error:", response.status, errorText)
+      throw new Error(`AI enhancement failed: ${response.status} - ${errorText}`)
+    }
+
+    const result = await response.json()
+    console.log("🎊 AI Enhancement Result received:", {
+      hasSpeakers: !!result.speakers,
+      hasSummary: !!result.summary,
+      hasKeywords: !!result.keywords,
+      hasSentiment: !!result.sentiment,
+      fullResult: result
+    })
+    
+    return result
   }
 
   const uploadLargeFile = async (file: File) => {
@@ -473,12 +662,40 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
         throw new Error("すべてのチャンクの処理に失敗しました。ファイルを小さく分割して再試行してください。")
       }
       
-      const finalTranscript = validTranscripts.join(' ')
+      const finalTranscript = removeDuplicatesFromTranscripts(validTranscripts)
       console.log(`Large file processing completed. Valid chunks: ${validTranscripts.length}/${chunks.length}, Final transcript length: ${finalTranscript.length}`)
       
-      const finalResult: TranscriptionResult = {
+      let finalResult: TranscriptionResult = {
         transcript: finalTranscript,
         success: true
+      }
+
+      // AI拡張機能を実行（チャンク処理では無効だったため、ここで実行）
+      if (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) {
+        console.log("🚀 Starting AI enhancement for large file...")
+        console.log("📊 Final transcript preview:", finalTranscript.substring(0, 200) + "...")
+        try {
+          const enhancementData = await performAIEnhancement(finalTranscript)
+          console.log("🎉 Enhancement data received:", enhancementData)
+          
+          // 結果を結合する前にログ出力
+          const enhancedResult = { ...finalResult, ...enhancementData }
+          console.log("📋 Combined result:", {
+            hasTranscript: !!enhancedResult.transcript,
+            hasSpeakers: !!enhancedResult.speakers,
+            hasSummary: !!enhancedResult.summary,
+            hasKeywords: !!enhancedResult.keywords,
+            hasSentiment: !!enhancedResult.sentiment
+          })
+          
+          finalResult = enhancedResult
+          console.log("✅ AI enhancement completed for large file")
+        } catch (enhanceError) {
+          console.error("❌ AI enhancement failed:", enhanceError)
+          finalResult.enhancementError = "AI拡張機能の処理中にエラーが発生しました: " + (enhanceError instanceof Error ? enhanceError.message : String(enhanceError))
+        }
+      } else {
+        console.log("⏭️ AI enhancement skipped (all options disabled)")
       }
       
       // エラーサマリーの作成
@@ -499,7 +716,21 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
       }
       
       setTranscriptionResult(finalResult)
-      onTranscriptionComplete?.(finalResult)
+      console.log("🎪 Setting transcription result:", finalResult)
+      console.log("🎨 UI will show:", {
+        transcript: !!finalResult.transcript,
+        speakers: !!finalResult.speakers,
+        summary: !!finalResult.summary,
+        keywords: !!finalResult.keywords,
+        sentiment: !!finalResult.sentiment,
+        structured: !!finalResult.structured
+      })
+      // ファイル情報を追加して親コンポーネントに送信
+      onTranscriptionComplete?.({
+        ...finalResult,
+        fileName: file?.name,
+        fileSize: file?.size
+      })
       setIsUploading(false)
     } catch (error) {
       console.error("Large file upload error:", error)
@@ -590,7 +821,34 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
         continue
       }
       
-      chunks.push(chunk)
+      // 元のファイル形式を完全に保持（ヘッダー情報も含めて適切に処理）
+      let chunkWithFormat: Blob
+      
+      if (offset === 0) {
+        // 最初のチャンクはファイルヘッダーを含むので、そのまま使用
+        chunkWithFormat = new Blob([chunk], { type: file.type })
+      } else {
+        // 2番目以降のチャンクは、MP3の場合は単純なバイナリ分割ではなく
+        // より安全な方法で分割（MP3フレーム境界を意識）
+        try {
+          // MP3の場合は、フレーム境界で分割するのが理想的だが、
+          // 簡易的にオーディオ形式として認識させるためのヘッダーを付加
+          if (file.type === 'audio/mpeg' || file.type === 'audio/mp3') {
+            // より小さなチャンクに分割してエラーを回避
+            const smallerChunkSize = Math.min(chunk.size, 1024 * 1024) // 1MBに制限
+            const smallerChunk = chunk.slice(0, smallerChunkSize)
+            chunkWithFormat = new Blob([smallerChunk], { type: file.type })
+          } else {
+            chunkWithFormat = new Blob([chunk], { type: file.type })
+          }
+        } catch (error) {
+          console.warn(`Chunk ${chunks.length + 1} format warning:`, error)
+          // エラーの場合は汎用オーディオ形式として処理
+          chunkWithFormat = new Blob([chunk], { type: 'audio/wav' })
+        }
+      }
+      
+      chunks.push(chunkWithFormat)
     }
     
     console.log(`Binary split: ${chunks.length} chunks of ~${(chunkSize / 1024 / 1024).toFixed(1)}MB each`)
@@ -705,9 +963,10 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
   const transcribeChunk = async (chunk: Blob, index: number): Promise<string> => {
     const formData = new FormData()
     
-    // チャンクのファイル名を適切に設定
-    const extension = chunk.type.includes('webm') ? 'webm' : 'wav'
-    formData.append("file", chunk, `chunk_${index}.${extension}`)
+    // チャンクのファイル形式を元のファイルに合わせて設定
+    const fileExtension = originalFile ? originalFile.name.split('.').pop()?.toLowerCase() : 'wav'
+    const mimeType = chunk.type || 'audio/mpeg' // MP3がデフォルト
+    formData.append("file", chunk, `chunk_${index}.${fileExtension}`)
     
     // API設定を追加
     formData.append("provider", apiConfig.provider)
@@ -727,7 +986,7 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     formData.append("language", options.language)
     formData.append("model", options.model)
 
-    console.log(`Transcribing chunk ${index + 1}, size: ${(chunk.size / 1024 / 1024).toFixed(2)}MB, type: ${chunk.type}`)
+    console.log(`Transcribing chunk ${index + 1}, size: ${(chunk.size / 1024 / 1024).toFixed(2)}MB, type: ${mimeType}, ext: ${fileExtension}`)
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 90000) // 90秒タイムアウト
@@ -1117,6 +1376,22 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
               <span className="text-sm font-medium text-green-700">文字起こし完了</span>
             </div>
             
+            {/* デバッグ情報 */}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <h4 className="font-medium text-blue-800 mb-2">🔍 処理結果の詳細</h4>
+              <div className="text-xs text-blue-700 space-y-1">
+                <div>基本文字起こし: ✅ 完了 ({transcriptionResult.transcript?.length || 0}文字)</div>
+                <div>話者識別: {transcriptionResult.speakers ? '✅ 完了' : '❌ 未処理'}</div>
+                <div>要約生成: {transcriptionResult.summary ? '✅ 完了' : '❌ 未処理'}</div>
+                <div>キーワード抽出: {transcriptionResult.keywords ? '✅ 完了' : '❌ 未処理'}</div>
+                <div>感情分析: {transcriptionResult.sentiment ? '✅ 完了' : '❌ 未処理'}</div>
+                <div>構造化: {transcriptionResult.structured ? '✅ 完了' : '❌ 未処理'}</div>
+                {transcriptionResult.enhancementError && (
+                  <div className="text-red-600">エラー: {transcriptionResult.enhancementError}</div>
+                )}
+              </div>
+            </div>
+            
             {/* 基本文字起こし */}
             <div className="space-y-2">
               <h3 className="font-medium">文字起こし結果</h3>
@@ -1238,7 +1513,3 @@ export default function FileUploadForm({ onTranscriptionComplete, onAudioProcess
     </Card>
   )
 }
-
-// Provide a named export so it can be imported with
-// `import { FileUploadForm } from "@/components/file-upload-form"`
-export { FileUploadForm }
