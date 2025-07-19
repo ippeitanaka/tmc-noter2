@@ -4,8 +4,8 @@ import { useState, useEffect } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 
-// AIモデルの型定義（OpenAIを削除）
-export type AIModel = "gemini" | "deepseek"
+// AIモデルの型定義（Geminiを最優先）
+export type AIModel = "gemini" | "deepseek" | "openai"
 
 interface AIModelSelectorProps {
   value: AIModel
@@ -16,9 +16,10 @@ interface AIModelSelectorProps {
 export function AIModelSelector({ value, onChange, disabled = false }: AIModelSelectorProps) {
   const [geminiAvailable, setGeminiAvailable] = useState<boolean>(true)
   const [geminiTemporary, setGeminiTemporary] = useState<boolean>(false)
-  const [deepseekAvailable, setDeepseekAvailable] = useState<boolean>(false) // デフォルトでfalseに設定
+  const [deepseekAvailable, setDeepseekAvailable] = useState<boolean>(false)
+  const [openaiAvailable, setOpenaiAvailable] = useState<boolean>(false)
   const [isLoading, setIsLoading] = useState<boolean>(true)
-  const [geminiModelInfo, setGeminiModelInfo] = useState<string>("")
+  const [geminiModelInfo, setGeminiModelInfo] = useState<string>("デフォルト・推奨")
 
   // 環境変数の状態をチェック
   useEffect(() => {
@@ -26,143 +27,97 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
       try {
         setIsLoading(true)
 
-        // Gemini APIキーのチェック
+        // Gemini APIキーのチェック（最優先）
         try {
           const geminiResponse = await fetch("/api/check-gemini")
-          console.log("Gemini check response status:", geminiResponse.status)
-          console.log("Gemini check response ok:", geminiResponse.ok)
+          console.log("🔍 Gemini check response status:", geminiResponse.status)
           
           if (geminiResponse.ok) {
-            let responseText: string;
-            try {
-              responseText = await geminiResponse.text()
-              console.log("Gemini response text length:", responseText.length)
-            } catch (textError) {
-              console.error("Failed to read Gemini response text:", textError)
-              setGeminiAvailable(false)
-              return
-            }
-            
-            // 空レスポンスチェック
-            if (!responseText || responseText.trim() === '') {
-              console.error("Empty response from Gemini check API")
-              setGeminiAvailable(false)
-              return
-            }
-            
-            try {
-              const data = JSON.parse(responseText)
-              setGeminiAvailable(data.available)
-              setGeminiTemporary(data.temporary || false)
-
-              // 使用中のモデル情報を表示
-              if (data.modelUsed) {
-                const modelName = data.modelUsed.split("/").pop() || data.modelUsed
-                setGeminiModelInfo(`使用モデル: ${modelName}`)
+            const responseText = await geminiResponse.text()
+            if (responseText && responseText.trim() !== '') {
+              try {
+                const data = JSON.parse(responseText)
+                setGeminiAvailable(data.available)
+                setGeminiTemporary(data.temporary || false)
+                
+                if (data.modelUsed) {
+                  const modelName = data.modelUsed.split("/").pop() || data.modelUsed
+                  setGeminiModelInfo(`${modelName} (推奨・無料)`)
+                } else {
+                  setGeminiModelInfo("高品質議事録生成 (推奨・無料)")
+                }
+                
+                console.log("✅ Gemini API availability:", data.available)
+              } catch (parseError) {
+                console.error("❌ Failed to parse Gemini response:", parseError)
+                setGeminiAvailable(false)
               }
-
-              console.log(
-                "Gemini API availability:",
-                data.available,
-                "temporary:",
-                data.temporary,
-                "skipApiCheck:",
-                data.skipApiCheck,
-                "modelUsed:",
-                data.modelUsed,
-              )
-            } catch (parseError) {
-              console.error("Failed to parse Gemini response JSON:", parseError)
-              console.error("Response text:", responseText.substring(0, 500))
+            } else {
+              console.warn("⚠️ Empty Gemini response")
               setGeminiAvailable(false)
             }
           } else {
-            let errorText = "";
-            try {
-              errorText = await geminiResponse.text()
-            } catch (textError) {
-              console.error("Failed to read Gemini error response:", textError)
-              errorText = "Failed to read error response"
-            }
-            console.error("Failed to check Gemini API:", geminiResponse.status, errorText.substring(0, 200))
+            console.warn("⚠️ Gemini API check failed:", geminiResponse.status)
             setGeminiAvailable(false)
           }
         } catch (fetchError) {
-          console.error("Gemini API check fetch error:", fetchError)
+          console.error("❌ Gemini API check error:", fetchError)
           setGeminiAvailable(false)
+        }
+
+        // OpenAI APIキーのチェック
+        try {
+          const openaiResponse = await fetch("/api/check-openai")
+          if (openaiResponse.ok) {
+            const data = await openaiResponse.json()
+            setOpenaiAvailable(data.available)
+            console.log("🔍 OpenAI API availability:", data.available)
+          } else {
+            setOpenaiAvailable(false)
+          }
+        } catch (fetchError) {
+          console.error("❌ OpenAI API check error:", fetchError)
+          setOpenaiAvailable(false)
         }
 
         // DeepSeek APIキーのチェック
         try {
           const deepseekResponse = await fetch("/api/check-deepseek")
-          console.log("DeepSeek check response status:", deepseekResponse.status)
-          console.log("DeepSeek check response ok:", deepseekResponse.ok)
-          
           if (deepseekResponse.ok) {
-            let responseText: string;
-            try {
-              responseText = await deepseekResponse.text()
-              console.log("DeepSeek response text length:", responseText.length)
-            } catch (textError) {
-              console.error("Failed to read DeepSeek response text:", textError)
-              setDeepseekAvailable(false)
-              return
-            }
-
-            // 空レスポンスチェック
-            if (!responseText || responseText.trim() === '') {
-              console.error("Empty response from DeepSeek check API")
-              setDeepseekAvailable(false)
-              return
-            }
-            console.log("DeepSeek response text length:", responseText.length)
-            
-            try {
-              const data = JSON.parse(responseText)
-              setDeepseekAvailable(data.available)
-              console.log("DeepSeek API availability:", data.available)
-            } catch (parseError) {
-              console.error("Failed to parse DeepSeek response JSON:", parseError)
-              console.error("Response text:", responseText.substring(0, 500))
-              setDeepseekAvailable(false)
-            }
+            const data = await deepseekResponse.json()
+            setDeepseekAvailable(data.available)
+            console.log("🔍 DeepSeek API availability:", data.available)
           } else {
-            let errorText = "";
-            try {
-              errorText = await deepseekResponse.text()
-            } catch (textError) {
-              console.error("Failed to read DeepSeek error response:", textError)
-              errorText = "Failed to read error response"
-            }
-            console.error("Failed to check DeepSeek API:", deepseekResponse.status, errorText.substring(0, 200))
             setDeepseekAvailable(false)
           }
         } catch (fetchError) {
-          console.error("DeepSeek API check fetch error:", fetchError)
+          console.error("❌ DeepSeek API check error:", fetchError)
           setDeepseekAvailable(false)
         }
 
-        // モデル選択のロジックを改善
-        if (value === "gemini" && !geminiAvailable) {
-          // Geminiが選択されているが利用できない場合
-          if (deepseekAvailable) {
-            console.log("Gemini is not available, switching to DeepSeek")
-            onChange("deepseek")
-          } else {
-            console.log("Both Gemini and DeepSeek are unavailable, staying with Gemini for rule-based fallback")
-            // どちらも使えない場合はGeminiのままにして、ルールベースにフォールバックさせる
+        // スマートなモデル選択ロジック（Geminiを最優先）
+        if (!geminiAvailable && !deepseekAvailable && !openaiAvailable) {
+          // 全て利用不可の場合はGeminiにして、ルールベースにフォールバック
+          console.log("🔄 全てのAIプロバイダーが利用不可、Geminiのルールベースフォールバックを使用")
+          if (value !== "gemini") {
+            onChange("gemini")
           }
         } else if (value === "deepseek" && !deepseekAvailable) {
-          // DeepSeekが選択されているが利用できない場合
-          console.log("DeepSeek is not available, switching to Gemini")
-          onChange("gemini") // Geminiが利用できなくてもルールベースにフォールバックするため
+          // DeepSeekが選択されているが利用できない場合、Geminiに切り替え
+          console.log("🔄 DeepSeek利用不可、Geminiに切り替え")
+          onChange("gemini")
+        } else if (value === "openai" && !openaiAvailable) {
+          // OpenAIが選択されているが利用できない場合、Geminiに切り替え
+          console.log("🔄 OpenAI利用不可、Geminiに切り替え")
+          onChange("gemini")
         }
       } catch (error) {
-        console.error("環境変数チェックエラー:", error)
-        // エラーが発生した場合、Geminiをデフォルトとして使用
+        console.error("❌ 環境変数チェックエラー:", error)
+        // エラー時はGeminiをデフォルトに設定
         setGeminiAvailable(true)
         setDeepseekAvailable(false)
-        if (value === "deepseek") {
+        setOpenaiAvailable(false)
+        if (value !== "gemini") {
           onChange("gemini")
         }
       } finally {
@@ -175,35 +130,80 @@ export function AIModelSelector({ value, onChange, disabled = false }: AIModelSe
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="ai-model">AI モデル</Label>
+      <Label htmlFor="ai-model" className="text-sm font-semibold">AI モデル（高品質議事録生成）</Label>
       <Select value={value} onValueChange={(val) => onChange(val as AIModel)} disabled={disabled || isLoading}>
         <SelectTrigger id="ai-model" className="w-full">
           <SelectValue placeholder="AIモデルを選択" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="gemini">
-            Google Gemini {!geminiAvailable && geminiTemporary && "(一時的に利用不可)"}
-            {!geminiAvailable && !geminiTemporary && "(利用不可)"}
+          <SelectItem value="gemini" className="font-bold">
+            <div className="flex items-center space-x-2">
+              <span className="text-lg">🌟</span>
+              <span>Google Gemini</span>
+              <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                {geminiAvailable ? "推奨・無料" : !geminiTemporary ? "利用不可" : "一時的に利用不可"}
+              </span>
+            </div>
           </SelectItem>
           <SelectItem value="deepseek" disabled={!deepseekAvailable}>
-            DeepSeek-V3 {!deepseekAvailable && "(利用不可)"}
+            <div className="flex items-center space-x-2">
+              <span className="text-lg">🚀</span>
+              <span>DeepSeek-V3</span>
+              <span className={`text-xs px-2 py-1 rounded-full ${deepseekAvailable ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-500'}`}>
+                {deepseekAvailable ? "無料" : "利用不可"}
+              </span>
+            </div>
+          </SelectItem>
+          <SelectItem value="openai" disabled={!openaiAvailable}>
+            <div className="flex items-center space-x-2">
+              <span className="text-lg">🤖</span>
+              <span>OpenAI GPT</span>
+              <span className={`text-xs px-2 py-1 rounded-full ${openaiAvailable ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-500'}`}>
+                {openaiAvailable ? "有料・高精度" : "利用不可"}
+              </span>
+            </div>
           </SelectItem>
         </SelectContent>
       </Select>
-      {geminiModelInfo && geminiAvailable && value === "gemini" && (
-        <p className="text-xs text-blue-500 mt-1">{geminiModelInfo}</p>
+      
+      {/* 状態表示 */}
+      {value === "gemini" && (
+        <div className="mt-2">
+          {geminiAvailable ? (
+            <p className="text-xs text-green-600 mt-1 font-medium bg-green-50 p-2 rounded border border-green-200">
+              ✅ {geminiModelInfo} - プロフェッショナルな議事録を生成します
+            </p>
+          ) : geminiTemporary ? (
+            <p className="text-xs text-yellow-600 mt-1 bg-yellow-50 p-2 rounded border border-yellow-200">
+              ⚠️ Geminiは一時的に利用できません。ルールベース生成を使用します。
+            </p>
+          ) : (
+            <p className="text-xs text-red-600 mt-1 bg-red-50 p-2 rounded border border-red-200">
+              ❌ Geminiは利用できません。ルールベース生成を使用します。
+            </p>
+          )}
+        </div>
       )}
-      {!geminiAvailable && value === "gemini" && geminiTemporary && (
-        <p className="text-xs text-yellow-500 mt-1">
-          Geminiは一時的に利用できません。ルールベースの生成が使用されます。
+      
+      {value === "deepseek" && deepseekAvailable && (
+        <p className="text-xs text-blue-600 mt-1 bg-blue-50 p-2 rounded border border-blue-200">
+          ✅ DeepSeek-V3が利用可能です（無料・高品質）
         </p>
       )}
-      {!geminiAvailable && value === "gemini" && !geminiTemporary && (
-        <p className="text-xs text-red-500 mt-1">Geminiは利用できません。ルールベースの生成が使用されます。</p>
+      
+      {value === "openai" && openaiAvailable && (
+        <p className="text-xs text-purple-600 mt-1 bg-purple-50 p-2 rounded border border-purple-200">
+          ✅ OpenAI GPTが利用可能です（有料・最高精度）
+        </p>
       )}
-      {!deepseekAvailable && value === "deepseek" && (
-        <p className="text-xs text-red-500 mt-1">DeepSeek-V3は現在利用できません。Geminiが代わりに使用されます。</p>
-      )}
+      
+      {/* 品質比較情報 */}
+      <div className="text-xs text-gray-500 mt-2 bg-gray-50 p-2 rounded border border-gray-200">
+        <div className="font-medium mb-1">🎯 議事録品質ランキング:</div>
+        <div>1. 🌟 Gemini (推奨) - 無料・高品質・構造化</div>
+        <div>2. 🚀 DeepSeek-V3 - 無料・高速</div>
+        <div>3. 🤖 OpenAI GPT - 有料・最高精度</div>
+      </div>
     </div>
   )
 }

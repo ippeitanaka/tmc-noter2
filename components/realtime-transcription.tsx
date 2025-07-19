@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Mic, MicOff, AlertTriangle, Wifi, WifiOff, FileText, Brain, Loader2 } from "lucide-react"
 import { TranscriptEditor } from "./editable-transcript"
-import { AIModelSelector } from "./ai-model-selector"
+import { AIModelSelector, AIModel } from "./ai-model-selector"
 
 interface SpeechRecognitionEvent {
   results: SpeechRecognitionResultList
@@ -62,7 +62,7 @@ const RealtimeTranscription = () => {
   const [minutes, setMinutes] = useState("")
   const [isGeneratingMinutes, setIsGeneratingMinutes] = useState(false)
   const [minutesError, setMinutesError] = useState<string | null>(null)
-  const [selectedAiModel, setSelectedAiModel] = useState<"gemini" | "deepseek">("gemini")
+  const [selectedAiModel, setSelectedAiModel] = useState<AIModel>("gemini")
 
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const isUserStoppedRef = useRef(false)

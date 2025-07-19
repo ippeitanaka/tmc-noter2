@@ -160,7 +160,7 @@ export function TranscriptionTabs() {
 
         <TabsContent value="minutes" className="space-y-6">
           <MinutesGenerator 
-            transcript={transcriptionData?.transcript}
+            transcript={transcriptionData?.transcript || ""}
             onMinutesGenerated={handleMinutesGenerated}
           />
           {transcriptionData?.minutes && (

@@ -1,43 +1,54 @@
 "use client"
 
 import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { FileText, Sparkles, Copy, Download, Settings, Bot } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Loader2, Copy, Download, Sparkles, FileText, CheckCircle, Users, Calendar, Target, ClipboardList, Clock } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import AIModelSelector, { AIModel } from "./ai-model-selector"
 
 interface MinutesGeneratorProps {
-  transcript?: string
-  onMinutesGenerated?: (minutes: string) => void
+  transcript: string
+  onMinutesGenerated?: (minutes: any) => void
 }
 
 export function MinutesGenerator({ transcript, onMinutesGenerated }: MinutesGeneratorProps) {
   const { toast } = useToast()
   const [isGenerating, setIsGenerating] = useState(false)
-  const [generatedMinutes, setGeneratedMinutes] = useState("")
-  const [selectedModel, setSelectedModel] = useState("gemini-pro")
+  const [generatedMinutes, setGeneratedMinutes] = useState<any>(null)
+  const [selectedModel, setSelectedModel] = useState<AIModel>("gemini")
   const [customPrompt, setCustomPrompt] = useState("")
-  const [minutesStyle, setMinutesStyle] = useState("formal")
-
-  const aiModels = [
-    { value: "gemini-pro", label: "Gemini Pro (無料)", description: "Google AIモデル - 推奨", badge: "無料" },
-    { value: "gpt-4", label: "GPT-4", description: "最高品質の議事録生成", badge: "有料" },
-    { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo", description: "高速で費用効率的", badge: "有料" },
-    { value: "deepseek-chat", label: "DeepSeek", description: "高性能なオープンソースモデル", badge: "有料" }
-  ]
+  const [minutesStyle, setMinutesStyle] = useState("professional")
 
   const minutesStyles = [
-    { value: "formal", label: "正式議事録", description: "企業会議に適した正式な形式" },
-    { value: "casual", label: "カジュアル", description: "チームミーティング向けの親しみやすい形式" },
-    { value: "detailed", label: "詳細記録", description: "発言内容を詳細に記録" },
-    { value: "summary", label: "要約版", description: "重要ポイントのみを簡潔に" },
-    { value: "action", label: "アクション重視", description: "決定事項とTodoに焦点" }
+    { 
+      value: "professional", 
+      label: "プロフェッショナル", 
+      description: "企業会議に適した正式な形式",
+      icon: <FileText className="w-4 h-4" />
+    },
+    { 
+      value: "detailed", 
+      label: "詳細記録", 
+      description: "発言内容を詳細に記録",
+      icon: <ClipboardList className="w-4 h-4" />
+    },
+    { 
+      value: "summary", 
+      label: "要約版", 
+      description: "重要ポイントのみを簡潔に",
+      icon: <Target className="w-4 h-4" />
+    },
+    { 
+      value: "action", 
+      label: "アクション重視", 
+      description: "決定事項とTodoに焦点",
+      icon: <CheckCircle className="w-4 h-4" />
+    }
   ]
 
   const generateMinutes = async () => {
@@ -53,6 +64,28 @@ export function MinutesGenerator({ transcript, onMinutesGenerated }: MinutesGene
     setIsGenerating(true)
     
     try {
+      console.log("🚀 高品質議事録生成開始...")
+      
+      // 強化されたプロンプトを構築
+      let enhancedPrompt = customPrompt
+      
+      if (!customPrompt) {
+        switch (minutesStyle) {
+          case "professional":
+            enhancedPrompt = "企業の正式会議として、プロフェッショナルで構造化された議事録を作成してください。役職・責任者・具体的な決定事項を重視し、第三者が読んでも理解できる明確な記録にしてください。"
+            break
+          case "detailed":
+            enhancedPrompt = "発言の詳細と文脈を保持しながら、誰が何を発言したかを明確に記録した詳細な議事録を作成してください。重要な議論の流れと背景情報も含めてください。"
+            break
+          case "summary":
+            enhancedPrompt = "重要なポイントのみを抽出した簡潔で分かりやすい議事録を作成してください。決定事項・アクションアイテム・次のステップを中心に整理してください。"
+            break
+          case "action":
+            enhancedPrompt = "決定事項・アクションアイテム・責任者・期限に焦点を当てた実行重視の議事録を作成してください。具体的なタスクと担当者を明確に特定してください。"
+            break
+        }
+      }
+
       const response = await fetch('/api/generate-minutes-with-ai', {
         method: 'POST',
         headers: {
@@ -60,33 +93,36 @@ export function MinutesGenerator({ transcript, onMinutesGenerated }: MinutesGene
         },
         body: JSON.stringify({
           transcript,
-          model: selectedModel,
-          style: minutesStyle,
-          customPrompt: customPrompt || undefined
+          provider: selectedModel,
+          userPrompt: enhancedPrompt,
+          language: "ja"
         }),
       })
 
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`)
+        const errorData = await response.json()
+        throw new Error(errorData.error || `API request failed: ${response.status}`)
       }
 
       const data = await response.json()
+      console.log("✅ 議事録生成成功:", data)
       
-      if (data.minutes) {
-        setGeneratedMinutes(data.minutes)
-        onMinutesGenerated?.(data.minutes)
+      if (data.meetingName) {
+        setGeneratedMinutes(data)
+        onMinutesGenerated?.(data)
+        
         toast({
-          title: "議事録生成完了",
-          description: `${aiModels.find(m => m.value === selectedModel)?.label}で議事録を生成しました。`,
+          title: "🎉 高品質議事録生成完了",
+          description: `${data.provider}で${data.quality === 'professional' ? 'プロフェッショナル' : 'スタンダード'}品質の議事録を生成しました。`,
         })
       } else {
         throw new Error(data.error || '議事録の生成に失敗しました')
       }
     } catch (error) {
-      console.error('Minutes generation error:', error)
+      console.error('❌ Minutes generation error:', error)
       toast({
         title: "生成エラー",
-        description: "議事録の生成中にエラーが発生しました。",
+        description: "議事録の生成中にエラーが発生しました。" + (error instanceof Error ? error.message : ''),
         variant: "destructive",
       })
     } finally {
@@ -95,8 +131,11 @@ export function MinutesGenerator({ transcript, onMinutesGenerated }: MinutesGene
   }
 
   const copyToClipboard = async () => {
+    if (!generatedMinutes) return
+    
     try {
-      await navigator.clipboard.writeText(generatedMinutes)
+      const formattedMinutes = formatMinutesForCopy(generatedMinutes)
+      await navigator.clipboard.writeText(formattedMinutes)
       toast({
         title: "コピーしました",
         description: "議事録をクリップボードにコピーしました。",
@@ -111,176 +150,251 @@ export function MinutesGenerator({ transcript, onMinutesGenerated }: MinutesGene
   }
 
   const downloadMinutes = () => {
-    const blob = new Blob([generatedMinutes], { type: 'text/plain;charset=utf-8' })
+    if (!generatedMinutes) return
+    
+    const formattedMinutes = formatMinutesForCopy(generatedMinutes)
+    const blob = new Blob([formattedMinutes], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `議事録_${new Date().toLocaleDateString('ja-JP').replace(/\//g, '-')}.txt`
+    link.download = `議事録_${generatedMinutes.meetingName || '会議'}_${new Date().toLocaleDateString('ja-JP').replace(/\//g, '-')}.txt`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
+    
+    toast({
+      title: "ダウンロード完了",
+      description: "議事録ファイルをダウンロードしました。",
+    })
+  }
+
+  const formatMinutesForCopy = (minutes: any): string => {
+    if (!minutes) return ""
+    
+    let formatted = `# ${minutes.meetingName}\n\n`
+    formatted += `**開催日**: ${minutes.date}\n`
+    formatted += `**参加者**: ${minutes.participants}\n`
+    formatted += `**議題**: ${minutes.agenda}\n\n`
+    
+    formatted += `## 主要ポイント\n`
+    if (Array.isArray(minutes.mainPoints)) {
+      minutes.mainPoints.forEach((point: string, index: number) => {
+        formatted += `${index + 1}. ${point}\n`
+      })
+    }
+    formatted += '\n'
+    
+    formatted += `## 決定事項\n${minutes.decisions}\n\n`
+    formatted += `## アクションアイテム\n${minutes.todos}\n\n`
+    
+    if (minutes.nextMeeting) {
+      formatted += `## 次回予定\n${minutes.nextMeeting}\n\n`
+    }
+    
+    if (minutes.generatedAt) {
+      formatted += `---\n生成日時: ${new Date(minutes.generatedAt).toLocaleString('ja-JP')}\n`
+    }
+    if (minutes.provider) {
+      formatted += `使用AI: ${minutes.provider}\n`
+    }
+    
+    return formatted
   }
 
   return (
-    <div className="space-y-6">
-      {/* AI設定パネル */}
-      <Card className="bg-gradient-to-br from-purple-50 to-pink-50 border-2 border-purple-200/50 shadow-xl rounded-2xl overflow-hidden">
-        <CardHeader className="bg-gradient-to-r from-purple-500 to-pink-600 text-white">
-          <CardTitle className="flex items-center gap-3 text-xl">
-            <div className="p-2 bg-white/20 rounded-xl">
-              <Settings className="h-6 w-6" />
-            </div>
-            AI議事録生成設定
-          </CardTitle>
-          <CardDescription className="text-purple-100">
-            🤖 AIモデルと議事録のスタイルを選択してください
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="model-select">AIモデル</Label>
-              <Select value={selectedModel} onValueChange={setSelectedModel}>
-                <SelectTrigger id="model-select">
-                  <SelectValue placeholder="AIモデルを選択" />
-                </SelectTrigger>
-                <SelectContent>
-                  {aiModels.map((model) => (
-                    <SelectItem key={model.value} value={model.value}>
-                      <div className="flex items-center justify-between w-full">
-                        <div className="flex flex-col">
-                          <span>{model.label}</span>
-                          <span className="text-xs text-gray-500">{model.description}</span>
-                        </div>
-                        <Badge variant={model.badge === "無料" ? "default" : "outline"} className="ml-2 text-xs">
-                          {model.badge}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-purple-600" />
+          高品質AI議事録生成
+          <Badge variant="secondary" className="ml-auto">NEW</Badge>
+        </CardTitle>
+        <CardDescription>
+          最新のAI技術で、プロフェッショナルな議事録を自動生成します
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* AI モデル選択 */}
+        <AIModelSelector
+          value={selectedModel}
+          onChange={setSelectedModel}
+          disabled={isGenerating}
+        />
+        
+        {/* 議事録スタイル選択 */}
+        <div className="space-y-2">
+          <Label htmlFor="minutes-style" className="text-sm font-semibold">議事録スタイル</Label>
+          <Select value={minutesStyle} onValueChange={setMinutesStyle} disabled={isGenerating}>
+            <SelectTrigger id="minutes-style">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {minutesStyles.map((style) => (
+                <SelectItem key={style.value} value={style.value}>
+                  <div className="flex items-center gap-2">
+                    {style.icon}
+                    <div>
+                      <div className="font-medium">{style.label}</div>
+                      <div className="text-xs text-gray-500">{style.description}</div>
+                    </div>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="style-select">議事録スタイル</Label>
-              <Select value={minutesStyle} onValueChange={setMinutesStyle}>
-                <SelectTrigger id="style-select">
-                  <SelectValue placeholder="スタイルを選択" />
-                </SelectTrigger>
-                <SelectContent>
-                  {minutesStyles.map((style) => (
-                    <SelectItem key={style.value} value={style.value}>
-                      <div className="flex flex-col">
-                        <span>{style.label}</span>
-                        <span className="text-xs text-gray-500">{style.description}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+        {/* カスタムプロンプト */}
+        <div className="space-y-2">
+          <Label htmlFor="custom-prompt">カスタムプロンプト（オプション）</Label>
+          <Textarea
+            id="custom-prompt"
+            placeholder="特別な要件や形式があれば、ここに詳しく記入してください..."
+            value={customPrompt}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+            disabled={isGenerating}
+            rows={3}
+          />
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="custom-prompt">カスタムプロンプト（オプション）</Label>
-            <Textarea
-              id="custom-prompt"
-              placeholder="特別な指示があれば記入してください（例：特定の観点での要約、フォーマット指定など）"
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              rows={3}
-            />
-          </div>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <Badge variant="secondary" className="text-xs bg-gradient-to-r from-blue-100 to-purple-100 text-blue-800 border-blue-200">
-              <Bot className="h-3 w-3 mr-1" />
-              🤖 {aiModels.find(m => m.value === selectedModel)?.label}
-            </Badge>
-            <Badge variant="outline" className="text-xs bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 border-green-200">
-              📝 {minutesStyles.find(s => s.value === minutesStyle)?.label}
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 生成ボタン */}
-      <Card className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200/50 shadow-xl rounded-2xl overflow-hidden">
-        <CardContent className="pt-8 pb-8">
-          <Button
-            onClick={generateMinutes}
-            disabled={isGenerating || !transcript}
-            className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-lg text-lg py-6 rounded-xl"
-            size="lg"
-          >
-            {isGenerating ? (
-              <>
-                <Sparkles className="h-5 w-5 mr-3 animate-spin" />
-                🤖 AIが議事録を生成中...
-              </>
-            ) : (
-              <>
-                <FileText className="h-5 w-5 mr-3" />
-                ✨ AI議事録を生成する
-              </>
-            )}
-          </Button>
-          {!transcript && (
-            <p className="text-sm text-gray-500 mt-4 text-center">
-              📤 まず音声ファイルをアップロードして文字起こしを行ってください
-            </p>
+        {/* 生成ボタン */}
+        <Button 
+          onClick={generateMinutes} 
+          disabled={!transcript || isGenerating}
+          className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+          size="lg"
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              高品質議事録を生成中...
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4 mr-2" />
+              プロフェッショナル議事録を生成
+            </>
           )}
-        </CardContent>
-      </Card>
+        </Button>
 
-      {/* 生成結果 */}
-      {generatedMinutes && (
-        <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200/50 shadow-xl rounded-2xl overflow-hidden">
-          <CardHeader className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white">
+        {/* 生成された議事録の表示 */}
+        {generatedMinutes && (
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-3 text-xl">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <FileText className="h-6 w-6" />
-                </div>
-                📑 生成された議事録
-              </CardTitle>
-              <div className="flex gap-3">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={copyToClipboard}
-                  className="bg-white/20 border-white/30 text-white hover:bg-white/30"
-                >
-                  <Copy className="h-4 w-4 mr-2" />
-                  📋 コピー
+              <h3 className="text-lg font-semibold text-green-800">✅ 議事録生成完了</h3>
+              <div className="flex gap-2">
+                <Button onClick={copyToClipboard} variant="outline" size="sm">
+                  <Copy className="w-4 h-4 mr-1" />
+                  コピー
                 </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={downloadMinutes}
-                  className="bg-white/20 border-white/30 text-white hover:bg-white/30"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  💾 ダウンロード
+                <Button onClick={downloadMinutes} variant="outline" size="sm">
+                  <Download className="w-4 h-4 mr-1" />
+                  ダウンロード
                 </Button>
               </div>
             </div>
-            <CardDescription className="text-blue-100">
-              ✨ {aiModels.find(m => m.value === selectedModel)?.label}で生成された議事録です
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-6">
-            <Separator className="mb-6" />
-            <ScrollArea className="h-96 w-full">
-              <div className="whitespace-pre-wrap text-sm leading-relaxed p-6 bg-gradient-to-br from-white to-blue-50 rounded-xl border-2 border-blue-100 shadow-inner">
-                {generatedMinutes}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+            
+            {/* 品質バッジ */}
+            <div className="flex gap-2 flex-wrap">
+              <Badge variant="secondary" className="bg-green-100 text-green-800">
+                <CheckCircle className="w-3 h-3 mr-1" />
+                {generatedMinutes.quality === 'professional' ? 'プロフェッショナル品質' : 'スタンダード品質'}
+              </Badge>
+              <Badge variant="outline">
+                使用AI: {generatedMinutes.provider}
+              </Badge>
+              {generatedMinutes.generatedAt && (
+                <Badge variant="outline">
+                  <Clock className="w-3 h-3 mr-1" />
+                  {new Date(generatedMinutes.generatedAt).toLocaleTimeString('ja-JP')}
+                </Badge>
+              )}
+            </div>
+
+            {/* 構造化された議事録表示 */}
+            <Card className="bg-gray-50 border-2 border-green-200">
+              <CardContent className="p-6 space-y-4">
+                {/* 基本情報 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="font-semibold text-blue-800 flex items-center gap-1">
+                      <FileText className="w-4 h-4" />
+                      会議名
+                    </h4>
+                    <p className="text-gray-800">{generatedMinutes.meetingName}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-blue-800 flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      開催日
+                    </h4>
+                    <p className="text-gray-800">{generatedMinutes.date}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-blue-800 flex items-center gap-1">
+                      <Users className="w-4 h-4" />
+                      参加者
+                    </h4>
+                    <p className="text-gray-800">{generatedMinutes.participants}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-blue-800 flex items-center gap-1">
+                      <Target className="w-4 h-4" />
+                      議題
+                    </h4>
+                    <p className="text-gray-800">{generatedMinutes.agenda}</p>
+                  </div>
+                </div>
+
+                {/* 主要ポイント */}
+                <div>
+                  <h4 className="font-semibold text-blue-800 mb-2">主要ポイント</h4>
+                  <ul className="space-y-1">
+                    {Array.isArray(generatedMinutes.mainPoints) 
+                      ? generatedMinutes.mainPoints.map((point: string, index: number) => (
+                          <li key={index} className="flex items-start gap-2">
+                            <span className="text-blue-600 font-semibold">{index + 1}.</span>
+                            <span className="text-gray-800">{point}</span>
+                          </li>
+                        ))
+                      : <li className="text-gray-800">{generatedMinutes.mainPoints}</li>
+                    }
+                  </ul>
+                </div>
+
+                {/* 決定事項 */}
+                <div>
+                  <h4 className="font-semibold text-blue-800 mb-2">決定事項</h4>
+                  <p className="text-gray-800 bg-yellow-50 p-3 rounded border border-yellow-200">
+                    {generatedMinutes.decisions}
+                  </p>
+                </div>
+
+                {/* アクションアイテム */}
+                <div>
+                  <h4 className="font-semibold text-blue-800 mb-2">アクションアイテム</h4>
+                  <p className="text-gray-800 bg-blue-50 p-3 rounded border border-blue-200">
+                    {generatedMinutes.todos}
+                  </p>
+                </div>
+
+                {/* 次回予定 */}
+                {generatedMinutes.nextMeeting && (
+                  <div>
+                    <h4 className="font-semibold text-blue-800 mb-2">次回予定</h4>
+                    <p className="text-gray-800 bg-green-50 p-3 rounded border border-green-200">
+                      {generatedMinutes.nextMeeting}
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
+
+export default MinutesGenerator
