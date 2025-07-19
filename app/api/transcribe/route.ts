@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import OpenAI from "openai"
 
 export const maxDuration = 300 // 5分に拡張（大きなファイル処理のため）
 
@@ -70,7 +71,29 @@ function removeDuplicatesUltraEnhanced(text: string): string {
   return result;
 }
 
-// Web Speech API音声ファイル処理関数（シミュレーション版）
+// 実際の音声ファイル処理関数（OpenAI Whisper API使用）
+async function processAudioFileWithOpenAI(file: File, openai: OpenAI): Promise<string> {
+  console.log("🎤 Processing audio file with OpenAI Whisper API for:", file.name)
+  
+  try {
+    // OpenAI Whisper APIを使用して文字起こし
+    const transcription = await openai.audio.transcriptions.create({
+      file: file,
+      model: "whisper-1",
+      language: "ja", // 日本語指定
+      response_format: "text"
+    })
+    
+    console.log(`📝 OpenAI Whisper transcription completed: ${transcription.length} characters`)
+    return transcription
+    
+  } catch (error) {
+    console.error("OpenAI Whisper API error:", error)
+    throw new Error(`OpenAI Whisper API処理に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
+}
+
+// Web Speech API音声ファイル処理関数（シミュレーション版・フォールバック用）
 async function processAudioFileWithWebSpeech(file: File): Promise<string> {
   console.log("🎤 Processing audio file with Web Speech API simulation for:", file.name)
   
@@ -249,8 +272,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Web Speech APIのみを使用（OpenAI APIは使用しない）
-    console.log("🎤 Using Web Speech API for all transcription processing")
+    // OpenAI APIキーの確認とクライアント初期化
+    let openai: OpenAI | null = null
+    const openaiApiKey = process.env.OPENAI_API_KEY
+    
+    if (openaiApiKey) {
+      console.log("🔑 OpenAI API key found, initializing OpenAI client")
+      openai = new OpenAI({
+        apiKey: openaiApiKey,
+      })
+    } else {
+      console.warn("⚠️ OpenAI API key not found, will use Web Speech API simulation")
+    }
 
     let formData;
     try {
@@ -332,23 +365,25 @@ export async function POST(request: NextRequest) {
       sizeMB: (file.size / (1024 * 1024)).toFixed(2),
     })
 
-    // ファイルサイズチェック（小さなファイルサイズに制限）
-    const MAX_SIZE = 10 * 1024 * 1024 // 10MBに制限（Web Speech API用）
+    // ファイルサイズチェック（OpenAI使用時は25MB、Web Speech API使用時は10MB）
+    const MAX_SIZE = openai ? 25 * 1024 * 1024 : 10 * 1024 * 1024
     if (file.size > MAX_SIZE) {
       console.error("=== FILE SIZE EXCEEDED ===", {
         fileSize: file.size,
         maxSize: MAX_SIZE,
         sizeMB: (file.size / (1024 * 1024)).toFixed(2),
+        usingOpenAI: !!openai
       })
       return NextResponse.json(
         {
-          error: "ファイルサイズが大きすぎます。Web Speech API では小さなファイルのみ対応しています。",
+          error: `ファイルサイズが大きすぎます。${openai ? 'OpenAI' : 'Web Speech API'} では${MAX_SIZE / (1024 * 1024)}MB以下のファイルのみ対応しています。`,
           details: `ファイルサイズ: ${(file.size / (1024 * 1024)).toFixed(1)}MB, 制限: ${MAX_SIZE / (1024 * 1024)}MB`,
-          suggestion: "ファイルを分割するか、より小さなファイルをお試しください。",
+          suggestion: openai ? "ファイルを25MB以下に圧縮してください。" : "OpenAI APIキーを設定すると25MBまで対応できます。",
           debug: {
             fileSize: file.size,
             maxSize: MAX_SIZE,
             exceeded: true,
+            usingOpenAI: !!openai
           },
         },
         { status: 413 },
@@ -371,32 +406,39 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Web Speech APIによる音声ファイル処理
-    console.log("🎤 Processing with Web Speech API...")
+    // 音声ファイル処理（OpenAI優先、フォールバックでWeb Speech API）
+    console.log(`🎤 Processing with ${openai ? 'OpenAI Whisper API' : 'Web Speech API simulation'}...`)
     
     try {
-      // Web Speech APIによる音声認識処理
-      const webSpeechResult = await processAudioFileWithWebSpeech(file)
+      let transcriptionResult: string
+      
+      if (openai) {
+        // OpenAI Whisper APIを使用して実際の音声処理
+        transcriptionResult = await processAudioFileWithOpenAI(file, openai)
+      } else {
+        // Web Speech APIシミュレーション（フォールバック）
+        transcriptionResult = await processAudioFileWithWebSpeech(file)
+      }
       
       // 重複除去処理を適用
-      const cleanedTranscript = removeDuplicatesUltraEnhanced(webSpeechResult)
+      const cleanedTranscript = removeDuplicatesUltraEnhanced(transcriptionResult)
       
       let result: any = {
         transcript: cleanedTranscript,
-        originalTranscript: webSpeechResult,
+        originalTranscript: transcriptionResult,
         success: true,
-        provider: 'webspeech',
+        provider: openai ? 'openai-whisper' : 'webspeech-simulation',
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type,
-        message: "Web Speech API による文字起こし完了"
+        message: `${openai ? 'OpenAI Whisper API' : 'Web Speech API シミュレーション'} による文字起こし完了`
       }
 
       // 拡張機能の実行（簡易版）
       if (options.speakerDiarization || options.generateSummary || options.extractKeywords || options.sentimentAnalysis) {
         try {
           console.log("Starting enhancement processing...")
-          const enhancedResult = await enhanceTranscription(webSpeechResult, options)
+          const enhancedResult = await enhanceTranscription(transcriptionResult, options)
           result = { ...result, ...enhancedResult }
           console.log("Enhancement completed successfully")
         } catch (enhanceError) {
@@ -405,13 +447,13 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      console.log("✅ Web Speech API transcription completed")
+      console.log(`✅ ${openai ? 'OpenAI Whisper API' : 'Web Speech API'} transcription completed`)
       return NextResponse.json(result)
       
     } catch (error) {
-      console.error("Web Speech API error:", error)
+      console.error(`${openai ? 'OpenAI Whisper API' : 'Web Speech API'} error:`, error)
       return NextResponse.json(
-        { error: "Web Speech API処理中にエラーが発生しました: " + (error instanceof Error ? error.message : 'Unknown error') },
+        { error: `${openai ? 'OpenAI Whisper API' : 'Web Speech API'}処理中にエラーが発生しました: ` + (error instanceof Error ? error.message : 'Unknown error') },
         { status: 500 }
       )
     }
