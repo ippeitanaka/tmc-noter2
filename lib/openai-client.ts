@@ -1,4 +1,5 @@
 // OpenAI APIを使用するためのクライアント
+import { parseMinutesText } from "./parse-minutes"
 
 // 議事録を生成する関数
 export async function generateMinutesWithOpenAI(
@@ -54,6 +55,8 @@ export async function generateMinutesWithOpenAI(
     console.log("Calling OpenAI API for minutes generation")
     console.log(`Processed transcript length: ${processedTranscript.length} characters`)
     console.log(`Using model: ${model}`)
+    console.log("Prompt preview:", finalPrompt.substring(0, 300) + "...")
+    console.log("Transcript preview:", processedTranscript.substring(0, 200) + "...")
 
     // OpenAI APIを呼び出す
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -129,88 +132,12 @@ export async function generateMinutesWithOpenAI(
     }
 
     console.log("OpenAI API response received successfully")
+    console.log("Generated text preview:", text.substring(0, 500) + "...")
 
     // 議事録をパースして構造化
     return parseMinutesText(text)
   } catch (error) {
     console.error("Minutes generation error:", error)
     throw error
-  }
-}
-
-// テキストから議事録の構造を抽出する関数
-function parseMinutesText(text: string): {
-  meetingName: string
-  date: string
-  participants: string
-  agenda: string
-  mainPoints: string[]
-  decisions: string
-  todos: string
-  nextMeeting?: string
-  meetingDetails?: string
-} {
-  // 会議名を抽出
-  const meetingNameMatch =
-    text.match(/会議名:?\s*(.+?)(?:\n|$)/i) ||
-    text.match(/# (.+?)(?:\n|$)/i) ||
-    text.match(/## 会議情報[\s\S]*?会議名:?\s*(.+?)(?:\n|$)/i)
-  const meetingName = meetingNameMatch ? meetingNameMatch[1].trim() : "会議"
-
-  // 日時を抽出
-  const dateMatch = text.match(/開催日時:?\s*(.+?)(?:\n|$)/i) || text.match(/日時:?\s*(.+?)(?:\n|$)/i)
-  const date = dateMatch ? dateMatch[1].trim() : new Date().toLocaleDateString()
-
-  // 参加者を抽出
-  const participantsMatch = text.match(/出席者:?\s*([\s\S]*?)(?=##|場所:|議題:|$)/i)
-  const participants = participantsMatch ? participantsMatch[1].trim() : "不明"
-
-  // 議題を抽出
-  const agendaMatch = text.match(/## 議題\s*([\s\S]*?)(?=##|$)/i)
-  let agenda = ""
-  if (agendaMatch) {
-    agenda = agendaMatch[1].trim()
-  } else {
-    const agendaLineMatch = text.match(/議題:?\s*(.+?)(?:\n|$)/i)
-    agenda = agendaLineMatch ? agendaLineMatch[1].trim() : "不明"
-  }
-
-  // 議事内容から主な発言を抽出
-  const contentMatch = text.match(/## 議事内容\s*([\s\S]*?)(?=## 決定事項|## アクション|$)/i)
-  let mainPoints: string[] = []
-  if (contentMatch) {
-    mainPoints = contentMatch[1]
-      .split(/\n+/)
-      .filter((line) => line.trim().startsWith("-") || line.trim().startsWith("・"))
-      .map((point) => point.replace(/^[・-]\s*/, "").trim())
-      .filter((point) => point.length > 0)
-  }
-
-  // 決定事項を抽出
-  const decisionsMatch = text.match(/## 決定事項\s*([\s\S]*?)(?=## アクション|## 次回|$)/i)
-  const decisions = decisionsMatch ? decisionsMatch[1].trim() : "特になし"
-
-  // TODOを抽出
-  const todosMatch = text.match(/## アクションアイテム\s*([\s\S]*?)(?=## 次回|## 備考|$)/i)
-  const todos = todosMatch ? todosMatch[1].trim() : "特になし"
-
-  // 次回の会議日程を抽出
-  const nextMeetingMatch = text.match(/## 次回会議\s*([\s\S]*?)(?=## 備考|$)/i)
-  const nextMeeting = nextMeetingMatch ? nextMeetingMatch[1].trim() : "未定"
-
-  // 会議詳細を抽出
-  const meetingDetailsMatch = text.match(/## 備考\s*([\s\S]*?)$/i)
-  const meetingDetails = meetingDetailsMatch ? meetingDetailsMatch[1].trim() : ""
-
-  return {
-    meetingName,
-    date,
-    participants,
-    agenda,
-    mainPoints,
-    decisions,
-    todos,
-    nextMeeting,
-    meetingDetails,
   }
 }

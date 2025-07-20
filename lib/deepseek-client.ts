@@ -16,42 +16,76 @@ export async function generateMinutesWithDeepSeek(
   nextMeeting?: string
   meetingDetails?: string
 }> {
-  console.log("🚀 Starting enhanced DeepSeek minutes generation")
+  console.log("🚀 Starting simplified DeepSeek minutes generation")
   
   try {
     const apiKey = process.env.DEEPSEEK_API_KEY
     if (!apiKey) {
+      console.error("❌ DeepSeek APIキーが設定されていません")
       throw new Error("DeepSeek APIキーが設定されていません")
     }
 
     // 事前品質チェック
     if (!transcript || transcript.trim().length < 10) {
+      console.error("❌ 文字起こしが短すぎます")
       throw new Error("文字起こしが短すぎます")
     }
 
-    // スマートなトークン制限処理とセグメント化
-    const segments = optimizeAndSegmentTranscript(transcript)
-    
-    console.log(`📊 Transcript segmented into ${segments.length} parts`)
+    console.log(`📊 DeepSeek transcript length: ${transcript.length} characters`)
+    console.log("🔗 Calling DeepSeek API...")
 
-    if (segments.length === 1) {
-      // シングルセグメント処理
-      const result = await processSegmentWithRetry(segments[0], apiKey, userPrompt, 1, 1)
-      console.log("✅ Single segment DeepSeek generation successful")
-      return result
-    } else {
-      // マルチセグメント処理
-      const results = await processMultipleSegments(segments, apiKey, userPrompt)
-      const mergedResult = mergeSegmentResults(results)
-      console.log("✅ Multi-segment DeepSeek generation successful")
-      return mergedResult
+    // 簡単なAPIコール（複雑なセグメント化は後で）
+    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: "あなたは会議の議事録を作成する専門家です。プロフェッショナルで実用的な議事録を作成します。"
+          },
+          {
+            role: "user",
+            content: userPrompt
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 4096,
+      }),
+    });
+
+    console.log(`� DeepSeek API response status: ${response.status}`)
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error("❌ DeepSeek API error:", response.status, errorText)
+      throw new Error(`DeepSeek API error: ${response.status} ${errorText}`)
     }
+
+    const result = await response.json()
+    console.log("📦 DeepSeek API response received")
+
+    if (!result.choices || !result.choices[0] || !result.choices[0].message || !result.choices[0].message.content) {
+      console.error("❌ Invalid DeepSeek response structure:", result)
+      throw new Error("DeepSeek APIから予期しないレスポンス構造")
+    }
+
+    const text = result.choices[0].message.content
+    console.log("📝 DeepSeek generated text preview:", text.substring(0, 300) + "...")
+
+    // 議事録をパースして構造化
+    const parsedResult = parseMinutesText(text)
+    console.log("✅ DeepSeek minutes parsing completed")
+    
+    return parsedResult
     
   } catch (error) {
     console.error("❌ DeepSeek minutes generation failed:", error)
-    // 高品質フォールバック
-    console.warn("🔄 Falling back to enhanced rule-based generation")
-    return generateMinutesRuleBased(transcript)
+    throw error // エラーを再投げして上位でハンドリング
   }
 }
 

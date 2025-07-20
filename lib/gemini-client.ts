@@ -21,13 +21,17 @@ export async function generateMinutesWithGemini(
   try {
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
+      console.error("❌ Gemini APIキーが設定されていません")
       throw new Error("Gemini APIキーが設定されていません")
     }
 
     // 事前品質チェック
     if (!transcript || transcript.trim().length < 10) {
+      console.error("❌ 文字起こしが短すぎます")
       throw new Error("文字起こしが短すぎます")
     }
+
+    console.log(`📊 Gemini transcript length: ${transcript.length} characters`)
 
     // スマートなトークン制限処理
     let processedTranscript = optimizeTranscriptForGemini(transcript)
@@ -37,6 +41,8 @@ export async function generateMinutesWithGemini(
     // 改善されたプロンプト構成
     const enhancedPrompt = buildEnhancedPrompt(userPrompt, processedTranscript)
     
+    console.log("🔗 Calling Gemini API...")
+    
     // ロバストな API 呼び出し
     const result = await executeGeminiAPIWithRetry(processedTranscript, apiKey, enhancedPrompt)
     
@@ -44,9 +50,7 @@ export async function generateMinutesWithGemini(
     return result
   } catch (error) {
     console.error("❌ Gemini minutes generation failed:", error)
-    // 高品質フォールバック
-    console.warn("🔄 Falling back to enhanced rule-based generation")
-    return generateMinutesRuleBased(transcript)
+    throw error // エラーを再投げして上位でハンドリング
   }
 }
 

@@ -122,6 +122,7 @@ Please create high-quality meeting minutes from the above audio transcript that 
     let lastError = null
 
     console.log(`🔄 プロバイダー試行順序: ${providerPriority.join(' → ')}`)
+    console.log(`🎯 選択されたプロバイダー: ${provider}`)
 
     // 各プロバイダーを順番に試行
     for (const currentProvider of providerPriority) {
@@ -130,12 +131,15 @@ Please create high-quality meeting minutes from the above audio transcript that 
         
         switch (currentProvider) {
           case 'gemini':
+            console.log("🟢 Gemini APIを呼び出し中...")
             result = await generateMinutesWithGemini(transcript, professionalPrompt)
             break
           case 'deepseek':
+            console.log("🔵 DeepSeek APIを呼び出し中...")
             result = await generateMinutesWithDeepSeek(transcript, professionalPrompt)
             break
           case 'openai':
+            console.log("🟠 OpenAI APIを呼び出し中...")
             result = await generateMinutesWithOpenAI(transcript, professionalPrompt, model)
             break
         }
@@ -148,6 +152,11 @@ Please create high-quality meeting minutes from the above audio transcript that 
             generatedAt: new Date().toISOString(),
             quality: 'professional'
           })
+        } else {
+          console.warn(`⚠️ ${currentProvider}の結果が品質チェックに失敗`)
+          if (result) {
+            console.log("結果の詳細:", JSON.stringify(result, null, 2))
+          }
         }
       } catch (error) {
         console.warn(`⚠️ ${currentProvider}での生成に失敗:`, error)
@@ -203,18 +212,12 @@ function getProviderPriority(preferredProvider: string): string[] {
   
   if (!allProviders.includes(preferredProvider)) {
     console.warn(`⚠️ 不明なプロバイダー: ${preferredProvider}、Geminiを優先に設定`)
-    return ['gemini', 'deepseek', 'openai']
+    return ['gemini']
   }
   
-  // 優先プロバイダーを最初に、残りは品質順
-  const priority = [preferredProvider]
-  const remaining = allProviders.filter(p => p !== preferredProvider)
-  
-  // Gemini > DeepSeek > OpenAI の順で品質を評価
-  const qualityOrder = ['gemini', 'deepseek', 'openai']
-  remaining.sort((a, b) => qualityOrder.indexOf(a) - qualityOrder.indexOf(b))
-  
-  return priority.concat(remaining)
+  // デバッグのため、指定されたプロバイダーのみを使用（フォールバックなし）
+  console.log(`🎯 デバッグモード: ${preferredProvider}のみを使用`)
+  return [preferredProvider]
 }
 
 // 議事録結果の品質検証
