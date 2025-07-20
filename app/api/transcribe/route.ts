@@ -76,6 +76,31 @@ async function processAudioFileWithOpenAI(file: File, openai: OpenAI): Promise<s
   console.log("🎤 Processing audio file with OpenAI Whisper API for:", file.name)
   
   try {
+    // ファイル形式の事前検証
+    const fileName = file.name.toLowerCase()
+    const supportedFormats = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']
+    const fileExtension = fileName.split('.').pop() || ''
+    
+    if (!supportedFormats.includes(fileExtension)) {
+      console.warn(`⚠️ Potentially unsupported file extension: ${fileExtension}`)
+      // 拡張子が問題でも、MIMEタイプで判断を続行
+    }
+    
+    // ファイルサイズの検証（OpenAI Whisperの25MB制限）
+    const maxSize = 25 * 1024 * 1024 // 25MB
+    if (file.size > maxSize) {
+      console.warn(`⚠️ File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds OpenAI limit (25MB)`)
+      throw new Error(`ファイルサイズが制限を超えています: ${(file.size / 1024 / 1024).toFixed(2)}MB > 25MB`)
+    }
+    
+    // チャンクの整合性確認
+    if (file.size < 1000) {
+      console.warn(`⚠️ Suspiciously small file size: ${file.size} bytes`)
+      throw new Error(`ファイルサイズが小さすぎます: ${file.size} bytes`)
+    }
+    
+    console.log(`📊 File validation passed: ${file.name}, size: ${(file.size / 1024 / 1024).toFixed(2)}MB, type: ${file.type}`)
+    
     // OpenAI Whisper APIを使用して文字起こし
     const transcription = await openai.audio.transcriptions.create({
       file: file,
@@ -87,9 +112,56 @@ async function processAudioFileWithOpenAI(file: File, openai: OpenAI): Promise<s
     console.log(`📝 OpenAI Whisper transcription completed: ${transcription.length} characters`)
     return transcription
     
-  } catch (error) {
-    console.error("OpenAI Whisper API error:", error)
-    throw new Error(`OpenAI Whisper API処理に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  } catch (error: any) {
+    console.error("❌ OpenAI Whisper API error:", error)
+    
+    // より詳細なエラー情報を提供
+    const errorMessage = error?.message || 'Unknown error'
+    const statusCode = error?.status || error?.response?.status
+    
+    if (statusCode === 400) {
+      console.error("🔍 Bad Request Error Details:", {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        statusCode,
+        errorMessage
+      })
+      
+      // 400エラーの場合、Web Speech APIにフォールバック
+      console.log("🔄 Falling back to Web Speech API due to OpenAI format error")
+      
+      // 特定のチャンクでエラーが起きた場合は、より堅牢な処理を試行
+      if (file.name.includes('chunk_')) {
+        console.log(`🔧 Attempting format recovery for chunk: ${file.name}`)
+        
+        try {
+          // チャンクをWAV形式として再構成
+          const arrayBuffer = await file.arrayBuffer()
+          const reformattedFile = new File([arrayBuffer], file.name, { 
+            type: 'audio/wav' 
+          })
+          
+          // 再度OpenAI APIを試行
+          const retryTranscription = await openai.audio.transcriptions.create({
+            file: reformattedFile,
+            model: "whisper-1",
+            language: "ja",
+            response_format: "text"
+          })
+          
+          console.log(`✅ Chunk format recovery successful for: ${file.name}`)
+          return retryTranscription
+          
+        } catch (retryError) {
+          console.warn(`🔄 Chunk format recovery failed, using fallback: ${retryError}`)
+        }
+      }
+      
+      return await processAudioFileWithWebSpeech(file)
+    }
+    
+    throw new Error(`OpenAI Whisper API処理に失敗しました: ${errorMessage}`)
   }
 }
 

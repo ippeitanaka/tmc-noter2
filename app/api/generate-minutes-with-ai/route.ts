@@ -19,83 +19,101 @@ export async function POST(request: NextRequest) {
 
     console.log(`📊 文字起こし処理開始: ${transcript.length}文字、言語: ${language}、優先プロバイダー: ${provider}`)
 
-    // 高品質な議事録生成のための強化プロンプト
+    // 最高品質な議事録生成のための詳細プロンプト
     const professionalPrompt = userPrompt || (language === 'ja' ? `
-あなたは経験豊富な秘書として、以下の会議文字起こしからプロフェッショナルな議事録を作成してください。
+あなたは20年以上の経験を持つプロフェッショナルな会議秘書です。以下の音声文字起こしから、企業レベルの高品質な議事録を作成してください。
 
-## 品質要件
-1. 会話の流れから重要な情報を正確に抽出
-2. 決定事項と検討事項を明確に区別  
-3. 具体的な数値・日程・担当者を漏れなく記録
-4. 読み手が理解しやすい構造化された形式
-5. あいまいな表現は避け、明確で簡潔な記述
-6. 推測部分は明示的に「（推測）」と記載
+## 重要な作業指針
+1. **情報の精査**: 音声認識エラーや不明瞭な部分は文脈から合理的に推測し、明確に記述
+2. **内容の構造化**: 散発的な発言を論理的にまとめ、意味のある議題として整理
+3. **具体性の確保**: あいまいな表現（「それ」「あれ」など）は具体的な内容に置き換え
+4. **重要度の判断**: 雑談と重要な議論を区別し、核心的な内容に焦点
+5. **行動指向**: 決定事項と今後のアクションを明確に分離
 
-## 必須出力形式
-以下の構造で必ず出力してください：
+## 出力フォーマット（厳密に従ってください）
 
-**会議名**: [会議内容から推測される具体的で分かりやすい名称]
-**開催日**: [特定できた日時情報または「日時未特定」]
-**参加者**: [発言者から特定された参加者名（役職があれば含める）]
-**議題**: [討議された主要なテーマを簡潔に]
+**会議名**: [内容から適切な会議名を推定。「○○学科会議」「○○プロジェクト会議」など具体的に]
+
+**開催日**: [文字起こしから特定できる日付。不明な場合は「記載なし」]
+
+**参加者**: [発言から特定される人物名と役職。「○○先生」「○○課長」など。複数名は改行で区切る]
+
+**議題**: [討議された主要テーマを3つ以内で簡潔に。例：「学生指導、行事運営、人事案件」]
 
 **主要ポイント**:
-1. [重要な議論・情報・課題1]
-2. [重要な議論・情報・課題2]
-3. [重要な議論・情報・課題3]
-（最低3つ以上の重要ポイントを抽出）
+1. [具体的な議論内容1 - 数値や固有名詞を含む詳細な記述]
+2. [具体的な議論内容2 - 課題や問題点を明確に]  
+3. [具体的な議論内容3 - 今後の方向性や計画]
+4. [具体的な議論内容4 - その他重要な事項]
+（重要度順に4-6個程度、各項目は1-2行で簡潔に）
 
 **決定事項**:
-[確定した内容。何も決定されなかった場合は「継続検討」と記載]
+[明確に合意・決定された内容のみ。推測や議論中の内容は含めない。決定がない場合は「継続審議」]
 
 **アクションアイテム**:
-[具体的なタスクと担当者・期限。なければ「特になし」と記載]
+1. [具体的なタスク] (担当: [担当者名])
+2. [具体的なタスク] (担当: [担当者名])
+（実際に割り当てられたタスクのみ。推測は避ける）
 
-**次回予定**:
-[次回会議予定があれば記載。なければ「未定」]
+**次回会議予定**: [明確に言及された場合のみ記載。不明な場合は「未定」]
+
+## 品質チェックポイント
+- 人名や固有名詞は音声認識エラーを修正して正確に記載
+- 数値情報（日付、人数、時間など）は漏れなく記録
+- 抽象的表現は避け、具体的で分かりやすい表現を使用
+- 議論の流れを論理的に整理し、読み手が理解しやすい構成
 
 文字起こしデータ:
 ${transcript}
 
-上記の文字起こしから、指定された形式で高品質な議事録を作成してください。
+上記の音声文字起こしから、企業の正式文書として使用できる高品質な議事録を作成してください。
 ` : `
-As an experienced secretary, please create professional meeting minutes from the following transcript.
+You are a professional meeting secretary with over 20 years of experience. Please create enterprise-level high-quality meeting minutes from the following audio transcript.
 
-## Quality Requirements
-1. Accurately extract important information from conversation flow
-2. Clearly distinguish between decisions and discussion points
-3. Record specific numbers, dates, and responsible persons without omission
-4. Use a structured format that is easy for readers to understand
-5. Avoid ambiguous expressions, use clear and concise descriptions
-6. Explicitly mark speculative parts as "(estimated)"
+## Important Guidelines
+1. **Information Verification**: Reasonably infer from context for speech recognition errors or unclear parts, describe clearly
+2. **Content Structuring**: Organize sporadic remarks logically and arrange as meaningful agenda items
+3. **Ensure Specificity**: Replace vague expressions ("it", "that", etc.) with specific content
+4. **Importance Assessment**: Distinguish between casual conversation and important discussions, focus on core content
+5. **Action-Oriented**: Clearly separate decisions from future actions
 
-## Required Output Format
-Please output in the following structure:
+## Output Format (Follow strictly)
 
-**Meeting Name**: [Specific and understandable name inferred from meeting content]
-**Date**: [Identified date/time information or "Date not specified"]
-**Participants**: [Participant names identified from speakers (include titles if available)]
-**Agenda**: [Main themes discussed concisely]
+**Meeting Name**: [Estimate appropriate meeting name from content. Be specific like "XX Department Meeting", "XX Project Meeting"]
+
+**Date**: [Date identifiable from transcript. If unknown, write "Not specified"]
+
+**Participants**: [Names and titles identified from speakers. "Mr. XX", "Manager XX", etc. Separate multiple names with line breaks]
+
+**Agenda**: [Main themes discussed in 3 or fewer items concisely. Example: "Student guidance, event management, personnel matters"]
 
 **Key Points**:
-1. [Important discussion/information/issue 1]
-2. [Important discussion/information/issue 2]
-3. [Important discussion/information/issue 3]
-(Extract at least 3 or more important points)
+1. [Specific discussion content 1 - detailed description including numbers and proper nouns]
+2. [Specific discussion content 2 - clearly state issues and problems]
+3. [Specific discussion content 3 - future directions and plans]
+4. [Specific discussion content 4 - other important matters]
+(4-6 items in order of importance, each item concise in 1-2 lines)
 
 **Decisions Made**:
-[Confirmed content. If nothing was decided, write "Continued discussion"]
+[Only clearly agreed and decided content. Do not include speculation or discussion in progress. If no decisions, write "Continued discussion"]
 
 **Action Items**:
-[Specific tasks with responsible persons and deadlines. If none, write "None"]
+1. [Specific task] (Responsible: [Person's name])
+2. [Specific task] (Responsible: [Person's name])
+(Only actually assigned tasks. Avoid speculation)
 
-**Next Meeting**:
-[Next meeting schedule if mentioned. If not, write "TBD"]
+**Next Meeting**: [Only record if clearly mentioned. If unknown, write "TBD"]
+
+## Quality Checkpoints
+- Correct speech recognition errors for names and proper nouns, record accurately
+- Record all numerical information (dates, numbers, times) without omission
+- Avoid abstract expressions, use specific and understandable expressions
+- Organize discussion flow logically with reader-friendly structure
 
 Transcript Data:
 ${transcript}
 
-Please create high-quality meeting minutes from the above transcript in the specified format.
+Please create high-quality meeting minutes from the above audio transcript that can be used as official corporate documentation.
 `)
 
     // スマートプロバイダー選択（優先順位付きフォールバック）

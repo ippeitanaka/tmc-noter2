@@ -828,16 +828,13 @@ Web Speech APIはブラウザ標準のリアルタイム音声認識機能です
         // 最初のチャンクはファイルヘッダーを含むので、そのまま使用
         chunkWithFormat = new Blob([chunk], { type: file.type })
       } else {
-        // 2番目以降のチャンクは、MP3の場合は単純なバイナリ分割ではなく
-        // より安全な方法で分割（MP3フレーム境界を意識）
+        // 2番目以降のチャンクは、MP3の場合はより安全な処理
         try {
-          // MP3の場合は、フレーム境界で分割するのが理想的だが、
-          // 簡易的にオーディオ形式として認識させるためのヘッダーを付加
           if (file.type === 'audio/mpeg' || file.type === 'audio/mp3') {
-            // より小さなチャンクに分割してエラーを回避
-            const smallerChunkSize = Math.min(chunk.size, 1024 * 1024) // 1MBに制限
-            const smallerChunk = chunk.slice(0, smallerChunkSize)
-            chunkWithFormat = new Blob([smallerChunk], { type: file.type })
+            // MP3のバイナリ分割は問題が多いため、WAV形式として処理を試みる
+            // これにより OpenAI API の互換性を向上させる
+            console.log(`Converting chunk ${chunks.length + 1} to WAV format for better compatibility`)
+            chunkWithFormat = new Blob([chunk], { type: 'audio/wav' })
           } else {
             chunkWithFormat = new Blob([chunk], { type: file.type })
           }

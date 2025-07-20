@@ -17,6 +17,7 @@ interface TranscriptionData {
   sentiment?: string
   structured?: string
   minutes?: string
+  structuredMinutes?: any // 構造化された議事録データ
   originalTranscript?: string
   duration?: number
   fileName?: string
@@ -52,13 +53,28 @@ export function TranscriptionTabs() {
     console.log("💾 Transcription data saved:", transcriptionResult)
   }
 
-  const handleMinutesGenerated = (minutes: string) => {
+  const handleMinutesGenerated = (minutes: any) => {
     if (transcriptionData) {
+      // 新しいAPIは構造化されたオブジェクトを返すので、それを適切に処理
+      const minutesContent = typeof minutes === 'string' ? minutes : 
+        `# ${minutes.meetingName || '会議'}\n\n` +
+        `**開催日**: ${minutes.date || '日時未特定'}\n` +
+        `**参加者**: ${minutes.participants || '参加者未特定'}\n` +
+        `**議題**: ${minutes.agenda || '議題未特定'}\n\n` +
+        `## 主要ポイント\n${Array.isArray(minutes.mainPoints) ? 
+          minutes.mainPoints.map((point: string, index: number) => `${index + 1}. ${point}`).join('\n') : 
+          minutes.mainPoints || '主要ポイント未抽出'}\n\n` +
+        `## 決定事項\n${minutes.decisions || '決定事項なし'}\n\n` +
+        `## アクションアイテム\n${minutes.todos || 'アクションアイテムなし'}\n\n` +
+        `${minutes.nextMeeting ? `## 次回予定\n${minutes.nextMeeting}\n\n` : ''}` +
+        `---\n生成AI: ${minutes.provider || 'Unknown'} | 品質: ${minutes.quality || 'Standard'}`
+      
       setTranscriptionData({
         ...transcriptionData,
-        minutes: minutes
+        minutes: minutesContent,
+        structuredMinutes: minutes // 構造化されたデータも保存
       })
-      console.log("📝 Minutes generated and saved:", minutes.substring(0, 100) + "...")
+      console.log("📝 Minutes generated and saved:", typeof minutes === 'string' ? minutes.substring(0, 100) + "..." : `${minutes.meetingName} - ${minutes.provider}`)
     }
   }
 
