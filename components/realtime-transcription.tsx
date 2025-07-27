@@ -142,31 +142,30 @@ const RealtimeTranscription = () => {
   // ヘルスチェックの開始/停止
   useEffect(() => {
     if (isIntentionallyRunning && autoRestart) {
-      const startHealthCheck = () => {
-        if (healthCheckIntervalRef.current) {
-          clearInterval(healthCheckIntervalRef.current)
-        }
-        
-        healthCheckIntervalRef.current = setInterval(() => {
-          if (isIntentionallyRunning && autoRestart && !isUserStoppedRef.current) {
-            if (!isRecording) {
-              console.log("ヘルスチェック: 録音が停止しているため再開を試行します")
-              startRecognition()
-            } else if (Date.now() - lastActivityTime > activityTimeoutDuration * 2) {
-              console.log("ヘルスチェック: 長時間無活動のため再開を試行します")
-              if (recognitionRef.current) {
-                recognitionRef.current.stop()
-              }
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+      }
+
+      healthCheckIntervalRef.current = setInterval(() => {
+        if (isIntentionallyRunning && autoRestart && !isUserStoppedRef.current) {
+          if (!isRecording) {
+            console.log("ヘルスチェック: 録音が停止しているため再開を試行します");
+            startRecognition();
+          } else if (Date.now() - lastActivityTime > activityTimeoutDuration * 2) {
+            console.log("ヘルスチェック: 長時間無活動のため再開を試行します");
+            if (recognitionRef.current) {
+              recognitionRef.current.stop();
             }
           }
-        }, healthCheckInterval)
-      }
-      startHealthCheck()
-    } else {
-      if (healthCheckIntervalRef.current) {
-        clearInterval(healthCheckIntervalRef.current)
-      }
+        }
+      }, healthCheckInterval);
     }
+
+    return () => {
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+      }
+    };
   }, [isIntentionallyRunning, autoRestart, isRecording, lastActivityTime, activityTimeoutDuration, healthCheckInterval])
 
   const startRecognition = useCallback(() => {
@@ -199,12 +198,6 @@ const RealtimeTranscription = () => {
       recognition.interimResults = true
       recognition.lang = "ja-JP"
       
-      // 音声認識の品質向上設定
-      if ('grammars' in recognition) {
-        // 文法設定があれば日本語に最適化
-        recognition.grammars = null
-      }
-
       recognition.onstart = () => {
         console.log("音声認識開始:", new Date().toISOString())
         setIsRecording(true)
@@ -1044,15 +1037,6 @@ const RealtimeTranscription = () => {
                 <div className="text-gray-400 text-center py-8">録音ボタンを押して音声認識を開始してください</div>
               )}
             </div>
-            
-            {/* 編集可能な文字起こし結果 */}
-            {transcript && (
-              <TranscriptEditor
-                transcript={transcript}
-                onTranscriptChange={setTranscript}
-                isRealtime={true}
-              />
-            )}
           </TabsContent>
 
           <TabsContent value="minutes" className="space-y-4">

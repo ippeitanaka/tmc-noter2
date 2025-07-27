@@ -70,116 +70,140 @@ export default function RealtimeRecording({
 
     // Web Speech APIの初期化
     if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      const recognition = new SpeechRecognition()
-      
-      // 高精度設定
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = 'ja-JP'
-      
-      // 高精度設定（型エラーを避けるためにanyでキャスト）
       try {
-        (recognition as any).maxAlternatives = 3 // 複数の候補を取得
-      } catch (e) {
-        console.log('maxAlternatives not supported')
-      }
-      
-      // 音声認識の精度向上設定
-      if ('webkitSpeechRecognition' in window) {
-        (recognition as any).serviceType = 'search' // 検索用の高精度モード
-      }
-      
-      let finalTranscriptBuffer = ''
-      let lastResultIndex = 0
-      
-      recognition.onresult = (event: any) => {
-        let interimTranscript = ''
-        let finalTranscript = ''
-        
-        // 新しい結果のみを処理 - 重複を避けるために最新のインデックスのみ処理
-        for (let i = lastResultIndex; i < event.results.length; i++) {
-          const result = event.results[i]
-          
-          // 最も信頼度の高い結果を選択
-          let bestTranscript = result[0].transcript
-          let bestConfidence = result[0].confidence || 0
-          
-          for (let j = 1; j < result.length; j++) {
-            if (result[j].confidence > bestConfidence) {
-              bestTranscript = result[j].transcript
-              bestConfidence = result[j].confidence
-            }
-          }
-          
-          if (result.isFinal) {
-            finalTranscript += bestTranscript
-          } else {
-            interimTranscript += bestTranscript
-          }
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+
+        // 高精度設定
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'ja-JP';
+
+        // maxAlternativesの設定（サポートされていない場合はスキップ）
+        try {
+          (recognition as any).maxAlternatives = 3;
+        } catch (e) {
+          console.log('maxAlternatives not supported');
         }
-        
-        // 最終的な結果のみを文字起こしに追加 - 重複防止のため条件を厳格化
-        if (finalTranscript && finalTranscript.trim()) {
-          // 重複チェック: 同じ内容が連続していないか確認
-          const lastSentence = finalTranscriptBuffer.split(/[。．！？]/).pop() || ''
-          const newSentence = finalTranscript.trim()
-          
-          // 同じ内容の重複を防ぐ
-          if (lastSentence.trim() !== newSentence.trim()) {
-            finalTranscriptBuffer += finalTranscript
-            updateTranscript(finalTranscriptBuffer)
-          }
-          
-          lastResultIndex = event.results.length
+
+        // grammarsプロパティの設定を完全に削除
+        try {
+          (recognition as any).grammars = null; // 明示的に削除
+        } catch (e) {
+          console.log('grammars not supported');
         }
-      }
-      
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error)
-        
-        // エラーに応じた処理
-        if (event.error === 'no-speech') {
-          // 音声が検出されない場合は再開
-          setTimeout(() => {
-            if (isTranscribing) {
-              try {
-                recognition.start()
-              } catch (e) {
-                console.log('Recognition already started')
+
+        let finalTranscriptBuffer = '';
+        let lastResultIndex = 0;
+
+        recognition.onresult = (event: any) => {
+          console.log('onresult triggered', event);
+          let interimTranscript = '';
+          let finalTranscript = '';
+
+          // 新しい結果のみを処理 - 重複を避けるために最新のインデックスのみ処理
+          for (let i = lastResultIndex; i < event.results.length; i++) {
+            const result = event.results[i];
+
+            // 最も信頼度の高い結果を選択
+            let bestTranscript = result[0].transcript;
+            let bestConfidence = result[0].confidence || 0;
+
+            for (let j = 1; j < result.length; j++) {
+              if (result[j].confidence > bestConfidence) {
+                bestTranscript = result[j].transcript;
+                bestConfidence = result[j].confidence;
               }
             }
-          }, 1000)
-        } else if (event.error === 'audio-capture') {
-          setError('マイクにアクセスできません。マイクの設定を確認してください。')
-          setIsTranscribing(false)
-        } else if (event.error === 'not-allowed') {
-          setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。')
-          setIsTranscribing(false)
-        } else {
-          setIsTranscribing(false)
+
+            if (result.isFinal) {
+              finalTranscript += bestTranscript;
+            } else {
+              interimTranscript += bestTranscript;
+            }
+          }
+
+          // 最終的な結果のみを文字起こしに追加 - 重複防止のため条件を厳格化
+          if (finalTranscript && finalTranscript.trim()) {
+            // 重複チェック: 同じ内容が連続していないか確認
+            const lastSentence = finalTranscriptBuffer.split(/[。．！？]/).pop() || ''
+            const newSentence = finalTranscript.trim()
+            
+            // 同じ内容の重複を防ぐ
+            if (lastSentence.trim() !== newSentence.trim()) {
+              finalTranscriptBuffer += finalTranscript
+              updateTranscript(finalTranscriptBuffer)
+            }
+            
+            lastResultIndex = event.results.length
+          }
         }
-      }
-      
-      recognition.onend = () => {
-        // 録音中の場合は自動的に再開
-        if (isRecording && enableTranscription) {
-          try {
-            recognition.start()
-          } catch (e) {
-            console.log('Recognition restart failed:', e)
+        
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error);
+
+          // エラーに応じた処理
+          if (event.error === 'no-speech') {
+            // 音声が検出されない場合は再開
+            setTimeout(() => {
+              if (isTranscribing) {
+                try {
+                  recognition.start();
+                } catch (e) {
+                  console.log('Recognition already started');
+                }
+              }
+            }, 1000);
+          } else if (event.error === 'audio-capture') {
+            setError('マイクにアクセスできません。マイクの設定を確認してください。');
+            setIsTranscribing(false);
+          } else if (event.error === 'not-allowed') {
+            setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。');
+            setIsTranscribing(false);
+          } else if (event.error === 'aborted') {
+            // abortedエラーの処理: 再起動を試みる
+            console.warn('Speech recognition aborted. Restarting...');
+            setTimeout(() => {
+              if (isTranscribing) {
+                try {
+                  recognition.start();
+                } catch (e) {
+                  console.log('Recognition restart failed:', e);
+                  setIsTranscribing(false);
+                }
+              }
+            }, 2000); // 再起動間隔を2秒に設定
+          } else {
+            setIsTranscribing(false);
+          }
+        }
+        
+        recognition.onend = () => {
+          console.log('Speech recognition ended');
+          // 録音中の場合は自動的に再開
+          if (isRecording && enableTranscription) {
+            try {
+              recognition.start()
+            } catch (e) {
+              console.log('Recognition restart failed:', e)
+              setIsTranscribing(false)
+            }
+          } else {
             setIsTranscribing(false)
           }
-        } else {
-          setIsTranscribing(false)
         }
+        
+        recognition.onstart = () => {
+          console.log('Speech recognition started');
+          setIsTranscribing(true)
+        }
+        
+        setSpeechRecognition(recognition)
+      } catch (error) {
+        console.error('Failed to initialize SpeechRecognition:', error);
       }
-      
-      recognition.onstart = () => {
-        setIsTranscribing(true)
-      }
-      
-      setSpeechRecognition(recognition)
+    } else {
+      console.warn('SpeechRecognition API is not supported in this browser.');
     }
   }, [])
 
