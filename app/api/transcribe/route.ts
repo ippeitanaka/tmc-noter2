@@ -3,6 +3,9 @@ import OpenAI from "openai"
 
 export const maxDuration = 300 // 5分に拡張（大きなファイル処理のため）
 
+// リクエストサイズ制限の設定
+export const maxSize = 10 * 1024 * 1024 // 10MB制限 (Vercelの制限に合わせて削減)
+
 // 10段階の超々強化重複除去システム（音声ファイル用）
 function removeDuplicatesUltraEnhanced(text: string): string {
   if (!text || text.trim().length === 0) return text;
@@ -333,12 +336,17 @@ export async function POST(request: NextRequest) {
     const contentLength = request.headers.get('content-length')
     if (contentLength) {
       const size = parseInt(contentLength)
-      const MAX_REQUEST_SIZE = 15 * 1024 * 1024 // 15MBに縮小（Web Speech API用）
+      const MAX_REQUEST_SIZE = 8 * 1024 * 1024 // 8MBに縮小（安全なサイズ）
       console.log(`Request size: ${(size / 1024 / 1024).toFixed(2)}MB, Max: ${MAX_REQUEST_SIZE / 1024 / 1024}MB`)
       if (size > MAX_REQUEST_SIZE) {
         console.error("Request size too large:", size)
         return NextResponse.json(
-          { error: "リクエストサイズが大きすぎます。15MB以下のファイルを使用してください。" },
+          { 
+            error: "ファイルサイズが大きすぎます", 
+            details: `アップロードサイズ: ${(size / 1024 / 1024).toFixed(1)}MB / 制限: ${MAX_REQUEST_SIZE / 1024 / 1024}MB`,
+            suggestion: "8MB以下のファイルを使用するか、ファイルを圧縮してください。",
+            errorCode: "FILE_TOO_LARGE"
+          },
           { status: 413 }
         )
       }
@@ -362,8 +370,28 @@ export async function POST(request: NextRequest) {
       formData = await request.formData()
     } catch (error) {
       console.error("FormData parsing error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      
+      // 413エラーの詳細処理
+      if (errorMessage.includes('413') || errorMessage.includes('too large') || errorMessage.includes('entity')) {
+        return NextResponse.json(
+          { 
+            error: "ファイルサイズが制限を超えています", 
+            details: "アップロードしたファイルが大きすぎます。",
+            suggestion: "8MB以下のファイルを使用するか、音声ファイルを圧縮してください。",
+            errorCode: "REQUEST_ENTITY_TOO_LARGE"
+          },
+          { status: 413 }
+        )
+      }
+      
       return NextResponse.json(
-        { error: "リクエストの解析に失敗しました。ファイルサイズを確認してください。" },
+        { 
+          error: "リクエストの解析に失敗しました", 
+          details: errorMessage,
+          suggestion: "ファイル形式や接続状況を確認してください。",
+          errorCode: "FORMDATA_PARSE_ERROR"
+        },
         { status: 400 }
       )
     }
@@ -437,8 +465,8 @@ export async function POST(request: NextRequest) {
       sizeMB: (file.size / (1024 * 1024)).toFixed(2),
     })
 
-    // ファイルサイズチェック（OpenAI使用時は25MB、Web Speech API使用時は10MB）
-    const MAX_SIZE = openai ? 25 * 1024 * 1024 : 10 * 1024 * 1024
+    // ファイルサイズチェック（OpenAI使用時は20MB、Web Speech API使用時は8MB）
+    const MAX_SIZE = openai ? 20 * 1024 * 1024 : 8 * 1024 * 1024 // サイズ制限を削減
     if (file.size > MAX_SIZE) {
       console.error("=== FILE SIZE EXCEEDED ===", {
         fileSize: file.size,
@@ -448,13 +476,15 @@ export async function POST(request: NextRequest) {
       })
       return NextResponse.json(
         {
-          error: `ファイルサイズが大きすぎます。${openai ? 'OpenAI' : 'Web Speech API'} では${MAX_SIZE / (1024 * 1024)}MB以下のファイルのみ対応しています。`,
-          details: `ファイルサイズ: ${(file.size / (1024 * 1024)).toFixed(1)}MB, 制限: ${MAX_SIZE / (1024 * 1024)}MB`,
-          suggestion: openai ? "ファイルを25MB以下に圧縮してください。" : "OpenAI APIキーを設定すると25MBまで対応できます。",
+          error: "ファイルサイズが制限を超えています",
+          details: `現在のファイル: ${(file.size / (1024 * 1024)).toFixed(1)}MB / 制限: ${MAX_SIZE / (1024 * 1024)}MB`,
+          suggestion: openai ? 
+            "ファイルを20MB以下に圧縮してください。" : 
+            "ファイルを8MB以下に圧縮するか、OpenAI APIキーを設定してください。",
+          errorCode: "FILE_SIZE_EXCEEDED",
           debug: {
             fileSize: file.size,
             maxSize: MAX_SIZE,
-            exceeded: true,
             usingOpenAI: !!openai
           },
         },

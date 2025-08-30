@@ -14,12 +14,12 @@ import { EditableTranscript } from "./editable-transcript"
 import { useApiConfig } from "@/contexts/api-config-context"
 
 const SUPPORTED_FORMATS = ["mp3", "wav", "m4a", "flac", "ogg", "webm"]
-const MAX_FILE_SIZE = 24 * 1024 * 1024 // 24MB (制限を少し下げて安全性を向上)
-const MAX_INPUT_FILE_SIZE = 100 * 1024 * 1024 // 100MB (入力ファイル制限を維持)
-const CHUNK_SIZE = 15 * 1024 * 1024 // 15MB chunks (分割サイズをさらに小さく)
-const SAFE_CHUNK_SIZE = 1.5 * 1024 * 1024 // 1.5MB chunks (安全な分割サイズ)
-const COMPRESSION_THRESHOLD = 10 * 1024 * 1024 // 10MB以上で圧縮を推奨
-const MAX_RETRIES = 3 // チャンクごとの最大再試行回数
+const MAX_FILE_SIZE = 8 * 1024 * 1024 // 8MB (413エラー対策でさらに削減)
+const MAX_INPUT_FILE_SIZE = 50 * 1024 * 1024 // 50MB (入力ファイル制限も削減)
+const CHUNK_SIZE = 6 * 1024 * 1024 // 6MB chunks (分割サイズをさらに小さく)
+const SAFE_CHUNK_SIZE = 1 * 1024 * 1024 // 1MB chunks (より安全なサイズ)
+const COMPRESSION_THRESHOLD = 5 * 1024 * 1024 // 5MB以上で圧縮を推奨
+const MAX_RETRIES = 5 // 再試行回数を増加
 
 interface TranscriptionOptions {
   speakerDiarization: boolean
@@ -90,7 +90,7 @@ export function FileUploadForm({ onTranscriptionComplete, onAudioProcessed, onTr
     }
 
     if (file.size > MAX_INPUT_FILE_SIZE) {
-      return `ファイルサイズが大きすぎます。最大100MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
+      return `ファイルサイズが大きすぎます。最大50MBまでです。現在のサイズ: ${(file.size / 1024 / 1024).toFixed(1)}MB`
     }
 
     return null
@@ -404,14 +404,23 @@ OpenAI APIキーを設定すると、高精度な自動文字起こしが利用�
           } else {
             setError("Web Speech API処理に失敗しました。")
           }
+        } else if (xhr.status === 413) {
+          const errorMsg = `ファイルサイズが大きすぎます（現在：${(file.size / 1024 / 1024).toFixed(1)}MB）。8MB以下のファイルを使用してください。`
+          console.error("413 Error:", errorMsg)
+          setError(errorMsg)
         } else {
-          setError(`Web Speech API処理エラー: ${xhr.status}`)
+          try {
+            const errorResponse = JSON.parse(xhr.responseText)
+            setError(errorResponse.error || `Web Speech API処理エラー: ${xhr.status}`)
+          } catch (e) {
+            setError(`Web Speech API処理エラー: ${xhr.status}`)
+          }
         }
         setIsUploading(false)
       }
 
       xhr.onerror = () => {
-        setError("Web Speech API処理中にネットワークエラーが発生しました。")
+        setError("Web Speech API処理中にネットワークエラーが発生しました。ファイルサイズを確認してください。")
         setIsUploading(false)
       }
 
@@ -456,7 +465,14 @@ OpenAI APIキーを設定すると、高精度な自動文字起こしが利用�
           setError("文字起こしに失敗しました。")
         }
       } else if (xhr.status === 413) {
-        setError("ファイルサイズが大きすぎます。自動圧縮に失敗しました。")
+        try {
+          const errorResponse = JSON.parse(xhr.responseText)
+          const errorMsg = errorResponse.error || `ファイルサイズが大きすぎます（現在：${(file.size / 1024 / 1024).toFixed(1)}MB）`
+          const suggestion = errorResponse.suggestion || "ファイルを8MB以下に圧縮してください。"
+          setError(`${errorMsg}\n\n解決方法: ${suggestion}`)
+        } catch (e) {
+          setError(`ファイルサイズが大きすぎます（現在：${(file.size / 1024 / 1024).toFixed(1)}MB）。8MB以下のファイルを使用してください。`)
+        }
       } else {
         try {
           const errorResponse = JSON.parse(xhr.responseText)
@@ -469,7 +485,7 @@ OpenAI APIキーを設定すると、高精度な自動文字起こしが利用�
     }
 
     xhr.onerror = () => {
-      setError("ネットワークエラーが発生しました。")
+      setError("ネットワークエラーが発生しました。ファイルサイズが大きすぎる可能性があります。")
       setIsUploading(false)
     }
 
