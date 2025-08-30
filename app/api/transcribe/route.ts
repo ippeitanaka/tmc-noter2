@@ -3,9 +3,6 @@ import OpenAI from "openai"
 
 export const maxDuration = 300 // 5分に拡張（大きなファイル処理のため）
 
-// リクエストサイズ制限の設定
-export const maxSize = 10 * 1024 * 1024 // 10MB制限 (Vercelの制限に合わせて削減)
-
 // 10段階の超々強化重複除去システム（音声ファイル用）
 function removeDuplicatesUltraEnhanced(text: string): string {
   if (!text || text.trim().length === 0) return text;
