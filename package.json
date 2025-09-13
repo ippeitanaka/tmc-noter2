@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "inject:ga4": "node scripts/inject-ga4.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
